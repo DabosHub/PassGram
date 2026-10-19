@@ -100,6 +100,9 @@ export function channelRequestButton(requestId: number) {
       chat_is_channel: true,
       chat_has_username: false,
       chat_is_created: true,
+      // Title/photo let PassGram show the channel before the bot is added as admin.
+      request_title: true,
+      request_photo: true,
       user_administrator_rights: userAdministratorRights(),
     },
   };
@@ -232,7 +235,7 @@ export function channelStateMessage(state: ChannelUiState): string {
     case "verified":
       return "Channel verified and PassGramBot is added with the required rights.";
     case "permission_missing":
-      return "Channel ownership is verified. Add PassGramBot as an administrator with Invite users and Ban users, then tap Check bot access.";
+      return "Channel ownership is verified. Add @PassGramBot as a channel administrator with Invite users via link and Ban users only, then tap Check bot access.";
     case "not_owner":
       return "Only the channel owner can connect it. Being an administrator is not enough.";
     case "public_channel":
@@ -252,18 +255,82 @@ export function telegramIdString(value: unknown): string | null {
   return null;
 }
 
-export function readChatShared(update: unknown): { requestId: number; chatId: string; fromUserId: string } | null {
+export function readChatShared(update: unknown): {
+  requestId: number;
+  chatId: string;
+  fromUserId: string;
+  title: string | null;
+  photoFileId: string | null;
+} | null {
   if (!update || typeof update !== "object") return null;
-  const message = (update as { message?: unknown }).message;
+  const message =
+    (update as { message?: unknown }).message ?? (update as { edited_message?: unknown }).edited_message;
   if (!message || typeof message !== "object") return null;
   const shared = (message as { chat_shared?: unknown }).chat_shared;
   const from = (message as { from?: { id?: unknown } }).from;
   if (!shared || typeof shared !== "object") return null;
-  const requestId = (shared as { request_id?: unknown }).request_id;
+  const requestId = parseTelegramInt((shared as { request_id?: unknown }).request_id);
   const chatId = telegramIdString((shared as { chat_id?: unknown }).chat_id);
   const fromUserId = telegramIdString(from?.id);
-  if (typeof requestId !== "number" || !Number.isSafeInteger(requestId) || requestId < 1 || !chatId || !fromUserId) return null;
-  return { requestId, chatId, fromUserId };
+  const titleRaw = (shared as { title?: unknown }).title;
+  const title = typeof titleRaw === "string" && titleRaw.trim() ? titleRaw.trim() : null;
+  const photoFileId = largestSharedPhotoFileId((shared as { photo?: unknown }).photo);
+  if (requestId == null || requestId < 1 || !chatId || !fromUserId) return null;
+  return { requestId, chatId, fromUserId, title, photoFileId };
+}
+
+function largestSharedPhotoFileId(photo: unknown): string | null {
+  if (!Array.isArray(photo) || photo.length === 0) return null;
+  let best: { file_id?: unknown; width?: unknown; height?: unknown } | null = null;
+  let bestArea = -1;
+  for (const entry of photo) {
+    if (!entry || typeof entry !== "object") continue;
+    const item = entry as { file_id?: unknown; width?: unknown; height?: unknown };
+    const width = typeof item.width === "number" ? item.width : 0;
+    const height = typeof item.height === "number" ? item.height : 0;
+    const area = width * height;
+    if (typeof item.file_id === "string" && item.file_id && area >= bestArea) {
+      best = item;
+      bestArea = area;
+    }
+  }
+  return typeof best?.file_id === "string" ? best.file_id : null;
+}
+
+/** Bot membership change in a channel/group (used to auto-detect Added rights). */
+export function readMyChatMember(update: unknown): {
+  chatId: string;
+  botUserId: string;
+  status: string;
+  canInviteUsers: boolean;
+  canRestrictMembers: boolean;
+} | null {
+  if (!update || typeof update !== "object") return null;
+  const event = (update as { my_chat_member?: unknown }).my_chat_member;
+  if (!event || typeof event !== "object") return null;
+  const chat = (event as { chat?: { id?: unknown; type?: unknown } }).chat;
+  const newMember = (event as { new_chat_member?: Record<string, unknown> }).new_chat_member;
+  if (!chat || !newMember) return null;
+  const chatId = telegramIdString(chat.id);
+  const botUserId = telegramIdString(newMember.user && typeof newMember.user === "object" ? (newMember.user as { id?: unknown }).id : null);
+  const status = typeof newMember.status === "string" ? newMember.status : "";
+  if (!chatId || !botUserId || !status) return null;
+  return {
+    chatId,
+    botUserId,
+    status,
+    canInviteUsers: newMember.can_invite_users === true,
+    canRestrictMembers: newMember.can_restrict_members === true,
+  };
+}
+
+function parseTelegramInt(value: unknown): number | null {
+  if (typeof value === "number" && Number.isSafeInteger(value)) return value;
+  if (typeof value === "string" && /^-?\d+$/.test(value)) {
+    const n = Number(value);
+    return Number.isSafeInteger(n) ? n : null;
+  }
+  return null;
 }
 
 export function subscriptionFulfillmentAllowed(channel: {

@@ -77,6 +77,8 @@ test("the selector requests only invite and restrict rights", () => {
   assert.equal(button.chat_is_channel, true);
   assert.equal(button.chat_has_username, false);
   assert.equal(button.chat_is_created, true);
+  assert.equal(button.request_title, true);
+  assert.equal(button.request_photo, true);
   assert.equal("bot_administrator_rights" in button, false);
   assert.deepEqual(button.user_administrator_rights, rights);
   assert.equal(preparedButtonPayload(42, 7).user_id, 42);

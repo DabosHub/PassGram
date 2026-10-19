@@ -38,7 +38,8 @@ const response = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, 
   body: JSON.stringify({
     url: webhookUrl,
     secret_token: secret,
-    allowed_updates: ["message", "chat_shared", "my_chat_member", "chat_member"],
+    // chat_shared arrives inside `message` updates (not a top-level update type).
+    allowed_updates: ["message", "my_chat_member"],
     drop_pending_updates: false,
   }),
 });

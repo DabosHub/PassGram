@@ -9,6 +9,7 @@ import {
   parseCommunityPrice,
   preparedButtonPayload,
   readChatShared,
+  readMyChatMember,
   subscriptionFulfillmentAllowed,
   tonAddressKind,
   type ChannelSnapshot,
@@ -108,20 +109,98 @@ export async function prepareChannelSelection(deps: ChannelDeps, initData: strin
 
 export async function ingestTelegramUpdate(deps: ChannelDeps, update: unknown): Promise<{ ok: true }> {
   const shared = readChatShared(update);
-  if (!shared) return { ok: true };
-  const selection = await deps.repo.getSelection(shared.requestId);
-  if (!selection || selection.ownerTelegramUserId !== shared.fromUserId) return { ok: true };
-  if (selection.status !== "selection_pending" && selection.status !== "verification_pending") return { ok: true };
-  await deps.repo.saveSelection({ ...selection, status: "verification_pending", telegramChatId: shared.chatId });
-  const outcome = await verifyChat(deps, shared.chatId, shared.fromUserId);
+  if (shared) {
+    const selection = await deps.repo.getSelection(shared.requestId);
+    if (!selection || selection.ownerTelegramUserId !== shared.fromUserId) return { ok: true };
+    if (selection.status !== "selection_pending" && selection.status !== "verification_pending") return { ok: true };
+    await deps.repo.saveSelection({ ...selection, status: "verification_pending", telegramChatId: shared.chatId });
+    try {
+      await finalizeSharedSelection(
+        deps,
+        selection,
+        shared.chatId,
+        shared.fromUserId,
+        shared.title,
+        shared.photoFileId,
+      );
+      const latest = (await deps.repo.getSelection(shared.requestId)) || selection;
+      const channel = await deps.repo.getChannel(shared.chatId);
+      await notifyOwnerChannelReceived(deps, shared.fromUserId, channel?.title || shared.title, latest.status);
+    } catch (error) {
+      const message =
+        error instanceof TelegramApiError
+          ? error.message
+          : "Telegram could not finish verifying this channel. Tap Check again.";
+      await deps.repo.saveSelection({
+        ...selection,
+        status: "verification_pending",
+        message,
+        telegramChatId: shared.chatId,
+      });
+    }
+    return { ok: true };
+  }
+
+  const member = readMyChatMember(update);
+  if (member && member.botUserId === deps.botUserId) {
+    const existing = await deps.repo.getChannel(member.chatId);
+    if (existing) {
+      const outcome = await verifyChat(deps, member.chatId, existing.ownerTelegramUserId, existing.title, existing.photoFileId);
+      if (outcome.snapshot) {
+        await deps.repo.saveChannel({
+          ...existing,
+          ...outcome.snapshot,
+          payoutAccount: existing.payoutAccount,
+          priceUsdt: existing.priceUsdt,
+          durationDays: existing.durationDays,
+          referrerCode: existing.referrerCode,
+          referrerTelegramUserId: existing.referrerTelegramUserId,
+          referralEnabled: existing.referralEnabled,
+          referralPercentBps: existing.referralPercentBps,
+          communityId: existing.communityId,
+          active: existing.active && outcome.state === "verified",
+        });
+        if (outcome.state === "verified") {
+          try {
+            await deps.telegram.call("sendMessage", {
+              chat_id: Number(existing.ownerTelegramUserId),
+              text: `PassGramBot is now an admin of “${existing.title}” with invite and ban rights. Open PassGram to finish creating your community.`,
+              disable_web_page_preview: true,
+            });
+          } catch {
+            // Mini App Check bot access still works without this DM.
+          }
+        }
+      }
+    }
+  }
+  return { ok: true };
+}
+
+async function finalizeSharedSelection(
+  deps: ChannelDeps,
+  selection: {
+    requestId: number;
+    ownerTelegramUserId: string;
+    preparedButtonId: string;
+    status: ChannelUiState;
+    message: string | null;
+    telegramChatId: string | null;
+  },
+  chatId: string,
+  ownerUserId: string,
+  sharedTitle?: string | null,
+  sharedPhotoFileId?: string | null,
+): Promise<void> {
+  const outcome = await verifyChat(deps, chatId, ownerUserId, sharedTitle, sharedPhotoFileId);
   if (!outcome.snapshot) {
     await deps.repo.saveSelection({
       ...selection,
       status: outcome.state,
       message: outcome.message,
-      telegramChatId: shared.chatId,
+      telegramChatId: chatId,
     });
-    return { ok: true };
+    return;
   }
   const saved = await deps.repo.saveVerifiedChannel(outcome.snapshot);
   if (saved === "conflict") {
@@ -129,42 +208,67 @@ export async function ingestTelegramUpdate(deps: ChannelDeps, update: unknown): 
       ...selection,
       status: "verification_failed",
       message: "This channel is already registered to another PassGram community.",
-      telegramChatId: shared.chatId,
+      telegramChatId: chatId,
     });
-    return { ok: true };
+    return;
   }
   await deps.repo.saveSelection({
     ...selection,
     status: outcome.state,
     message: outcome.message,
-    telegramChatId: shared.chatId,
+    telegramChatId: chatId,
   });
-  return { ok: true };
 }
 
 export async function readChannelSelection(deps: ChannelDeps, initData: string, requestId: number): Promise<ChannelResult> {
   const identity = validateInitData(initData, deps.botToken, deps.now() / 1000);
   if (!identity) return fail("verification_failed", "Open PassGram from Telegram so your account can be confirmed.");
-  const selection = await deps.repo.getSelection(requestId);
+  let selection = await deps.repo.getSelection(requestId);
   if (!selection || selection.ownerTelegramUserId !== String(identity.userId)) {
     return fail("verification_failed", "This channel selection could not be found.");
   }
+
+  // Resume verification if webhook saved the chat id but crashed before finishing.
+  if (
+    (selection.status === "verification_pending" || selection.status === "selection_pending") &&
+    selection.telegramChatId
+  ) {
+    await finalizeSharedSelection(deps, selection, selection.telegramChatId, selection.ownerTelegramUserId, null);
+    selection = (await deps.repo.getSelection(requestId)) || selection;
+  }
+
   if (!ownershipVerified(selection.status) || !selection.telegramChatId) {
     return {
       ok: selection.status === "selection_pending" || selection.status === "verification_pending",
       state: selection.status,
-      message: selection.message || channelStateMessage(selection.status),
+      message:
+        selection.message ||
+        (selection.status === "selection_pending"
+          ? "Waiting for Telegram to deliver the channel. If you already shared it with the bot, tap Check again — or select the channel once more."
+          : channelStateMessage(selection.status)),
     };
   }
-  let channel = await deps.repo.getChannel(selection.telegramChatId);
+  const chatId = selection.telegramChatId;
+  let channel = await deps.repo.getChannel(chatId);
+  if (!channel) {
+    // Channel row missing — re-run verify to recreate ownership draft.
+    await finalizeSharedSelection(deps, selection, chatId, selection.ownerTelegramUserId, null);
+    selection = (await deps.repo.getSelection(requestId)) || selection;
+    channel = await deps.repo.getChannel(chatId);
+  }
   if (channel && memberCountIsStale(channel, deps.now())) {
     channel = await refreshMemberCount(deps, channel);
   }
-  const state = channel && channel.botCanInviteUsers && channel.botCanRestrictMembers ? "verified" : "permission_missing";
+  const state =
+    channel && channel.botCanInviteUsers && channel.botCanRestrictMembers
+      ? "verified"
+      : ownershipVerified(selection.status)
+        ? "permission_missing"
+        : selection.status;
   return {
     ok: true,
     state,
-    message: channelStateMessage(state),
+    message: selection.message || channelStateMessage(state),
     requestId,
     channel: channel ? toPublic(channel) : undefined,
   };
@@ -372,6 +476,8 @@ async function verifyChat(
   deps: ChannelDeps,
   chatId: string,
   ownerUserId: string,
+  sharedTitle?: string | null,
+  sharedPhotoFileId?: string | null,
 ): Promise<{ state: ChannelUiState; message: string; snapshot: ChannelSnapshot | null }> {
   const now = new Date(deps.now()).toISOString();
   let chat: Record<string, unknown>;
@@ -384,7 +490,7 @@ async function verifyChat(
       return {
         state: "permission_missing",
         message: channelStateMessage("permission_missing"),
-        snapshot: ownershipDraftSnapshot(chatId, ownerUserId, now),
+        snapshot: ownershipDraftSnapshot(chatId, ownerUserId, now, sharedTitle, sharedPhotoFileId),
       };
     }
     throw error;
@@ -445,14 +551,20 @@ async function verifyChat(
   };
 }
 
-function ownershipDraftSnapshot(chatId: string, ownerUserId: string, now: string): ChannelSnapshot {
+function ownershipDraftSnapshot(
+  chatId: string,
+  ownerUserId: string,
+  now: string,
+  sharedTitle?: string | null,
+  sharedPhotoFileId?: string | null,
+): ChannelSnapshot {
   return {
     telegramChatId: chatId,
     communityId: null,
     ownerTelegramUserId: ownerUserId,
-    title: "Private channel",
+    title: sharedTitle?.trim() || "Private channel",
     description: null,
-    photoFileId: null,
+    photoFileId: sharedPhotoFileId?.trim() || null,
     telegramMemberCount: null,
     telegramMemberCountFetchedAt: null,
     botCanInviteUsers: false,
@@ -468,6 +580,39 @@ function ownershipDraftSnapshot(chatId: string, ownerUserId: string, now: string
     referralPercentBps: 0,
     active: false,
   };
+}
+
+/** Confirms the share in bot chat and tells the owner how to grant invite/ban rights. */
+async function notifyOwnerChannelReceived(
+  deps: ChannelDeps,
+  ownerUserId: string,
+  title: string | null | undefined,
+  status: ChannelUiState,
+): Promise<void> {
+  if (!ownershipVerified(status)) return;
+  const label = title?.trim() || "your private channel";
+  const text =
+    status === "verified"
+      ? `PassGram verified “${label}” and @PassGramBot already has invite and ban rights. Open the Mini App to finish creating your community.`
+      : [
+          `PassGram verified ownership of “${label}”.`,
+          "",
+          "Next: open the channel → Administrators → Add Admin → @PassGramBot.",
+          "Enable only:",
+          "• Invite users via link",
+          "• Ban users",
+          "",
+          "Leave other permissions off, then return to PassGram — it updates automatically when Telegram notifies the bot, or tap Check bot access.",
+        ].join("\n");
+  try {
+    await deps.telegram.call("sendMessage", {
+      chat_id: Number(ownerUserId),
+      text,
+      disable_web_page_preview: true,
+    });
+  } catch {
+    // Owner may not have started the bot yet; Mini App UI still shows the same instructions.
+  }
 }
 
 async function readMember(deps: ChannelDeps, chatId: string, userId: string): Promise<{ status?: string; can_invite_users?: boolean; can_restrict_members?: boolean } | null> {

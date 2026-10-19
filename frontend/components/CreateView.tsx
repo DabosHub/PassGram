@@ -67,6 +67,34 @@ export function CreateView() {
   const botAdded = Boolean(channel?.botAdded ?? (channel?.botCanInviteUsers && channel?.botCanRestrictMembers));
   const owned = ownershipVerified(channelState) && channel != null;
 
+  // While waiting for the owner to add PassGramBot, poll access so the Added badge flips without a manual tap.
+  useEffect(() => {
+    if (!owned || botAdded || !channel?.telegramChatId || busy) return;
+    let cancelled = false;
+    const generation = pollGeneration.current;
+    const timer = window.setInterval(() => {
+      if (cancelled || pollGeneration.current !== generation) return;
+      void (async () => {
+        try {
+          const response = await fetch("/api/telegram/access", {
+            method: "POST",
+            headers: { ...telegramHeaders(), "content-type": "application/json" },
+            body: JSON.stringify({ telegramChatId: channel.telegramChatId }),
+          });
+          const result = (await response.json()) as ChannelResponse;
+          if (cancelled || pollGeneration.current !== generation) return;
+          if (ownershipVerified(result.state || "") && result.channel) applyChannel(result);
+        } catch {
+          // Keep waiting; user can still tap Check bot access.
+        }
+      })();
+    }, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [owned, botAdded, channel?.telegramChatId, busy]);
+
   useEffect(() => {
     if (!channel?.hasPhoto) {
       setPhotoUrl("");
@@ -159,13 +187,23 @@ export function CreateView() {
 
   async function pollSelection(id: number) {
     const generation = ++pollGeneration.current;
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    setBusy(true);
+    for (let attempt = 0; attempt < 40; attempt += 1) {
       if (pollGeneration.current !== generation) return;
       try {
         const response = await fetch(`/api/telegram/selections/${id}`, { headers: telegramHeaders() });
         const result = (await response.json()) as ChannelResponse;
         if (result.state === "selection_pending" || result.state === "verification_pending") {
-          await delay(1500);
+          if (attempt === 0 || attempt % 3 === 0) {
+            setChannelState(result.state || "verification_pending");
+            setChannelMessage(
+              result.message ||
+                (result.state === "selection_pending"
+                  ? "Waiting for Telegram to deliver the selected channel to PassGramBot…"
+                  : "Verifying channel ownership…"),
+            );
+          }
+          await delay(attempt < 8 ? 1000 : 1500);
           continue;
         }
         if (pollGeneration.current !== generation) return;
@@ -178,8 +216,10 @@ export function CreateView() {
     }
     if (pollGeneration.current !== generation) return;
     setBusy(false);
-    setChannelState("verification_pending");
-    setChannelMessage("Telegram has not delivered the selected channel yet. Check again, or select the channel once more.");
+    setChannelState("selection_pending");
+    setChannelMessage(
+      "Still waiting for Telegram to deliver the channel to PassGram. Tap Check again after the share appears in the bot chat, or select the channel once more.",
+    );
   }
 
   async function checkBotAccess() {
@@ -286,18 +326,25 @@ export function CreateView() {
             </div>
             {!botAdded ? (
               <div className="space-y-2 rounded-2xl border border-[var(--pg-line)] bg-[var(--pg-bg)] p-3">
+                <p className="text-sm font-semibold text-[var(--pg-text)]">Next step: add the bot</p>
                 <p className="text-sm text-[var(--pg-text)]">
-                  Add <span className="font-semibold">@PassGramBot</span> as a channel administrator with these rights:
+                  Open your channel → Administrators → Add admin → choose{" "}
+                  <span className="font-semibold">@PassGramBot</span>. Enable only:
                 </p>
                 <ul className="list-disc space-y-1 pl-5 text-sm text-[var(--pg-hint)]">
                   <li>Invite users via link</li>
                   <li>Ban users</li>
                 </ul>
+                <p className="text-xs text-[var(--pg-hint)]">
+                  Leave other permissions off. After saving, tap Check bot access — PassGram also updates automatically when Telegram notifies the bot.
+                </p>
                 <button type="button" className={primaryButton} disabled={busy} onClick={() => void checkBotAccess()}>
                   {busy ? "Checking" : "Check bot access"}
                 </button>
               </div>
-            ) : null}
+            ) : (
+              <p className="text-sm text-[var(--pg-mint)]">PassGramBot is added with invite and ban rights.</p>
+            )}
           </div>
         ) : null}
         {channelMessage && !owned ? (
@@ -307,7 +354,9 @@ export function CreateView() {
         ) : null}
         {owned && !botAdded && channelMessage ? <p className="text-sm text-[var(--pg-hint)]">{channelMessage}</p> : null}
         {channelState === "verification_pending" || channelState === "selection_pending" ? (
-          <p className="text-sm text-[var(--pg-hint)]">{channelState === "selection_pending" ? "Waiting for Telegram." : "Verification is still running."}</p>
+          <p className="text-sm text-[var(--pg-hint)]">
+            {channelState === "selection_pending" ? "Waiting for Telegram to deliver the channel." : "Verification is still running."}
+          </p>
         ) : null}
         {showSelector ? (
           <button type="button" className={primaryButton} disabled={busy} onClick={() => void selectChannel()}>
@@ -318,7 +367,7 @@ export function CreateView() {
             Select a different channel
           </button>
         )}
-        {channelState === "verification_pending" ? (
+        {channelState === "verification_pending" || channelState === "selection_pending" ? (
           <button type="button" className={secondaryButton} disabled={busy || requestId == null} onClick={() => requestId != null && void pollSelection(requestId)}>
             Check again
           </button>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { activePassgramCount, feePolicy } from "@/lib/domain";
 import { formatDate, formatUsdt } from "@/lib/money";
 import type { AccountPage, AppRoute } from "@/lib/route";
@@ -340,7 +340,7 @@ function NotifyToggle({
   );
 }
 
-function PolicyBlock({ title, children }: { title: string; children: string }) {
+function PolicyBlock({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="border-t border-[var(--pg-line)] pt-3 first:border-t-0 first:pt-0">
       <h3 className="text-[15px] font-semibold">{title}</h3>

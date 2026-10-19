@@ -17,5 +17,12 @@
     "paths": { "@/*": ["./*"] }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules", "lib/domain.test.ts"]
+  "exclude": [
+    "node_modules",
+    "node_modules.incomplete",
+    "node_modules.onedrive",
+    "node_modules.old",
+    "**/*.test.ts",
+    "lib/test-register.mjs"
+  ]
 }

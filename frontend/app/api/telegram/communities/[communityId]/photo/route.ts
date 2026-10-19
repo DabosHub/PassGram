@@ -10,7 +10,7 @@ export async function GET(_request: Request, context: { params: Promise<{ commun
     const deps = await buildChannelDeps();
     const photo = await loadCommunityPhotoById(deps, Number(raw));
     if (!photo) return new Response(null, { status: 404 });
-    return new Response(Buffer.from(photo.bytes), {
+    return new Response(new Uint8Array(photo.bytes), {
       status: 200,
       headers: {
         "content-type": photo.contentType,

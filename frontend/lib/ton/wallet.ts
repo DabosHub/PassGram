@@ -8,6 +8,8 @@ export type WalletSendResult = {
     communityId: number;
     amount: string;
     to: string;
+    hasPlatformReferrer?: boolean;
+    hasCommunityReferrer?: boolean;
   };
 };
 

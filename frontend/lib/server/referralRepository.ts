@@ -1,3 +1,4 @@
+import { Pool } from "pg";
 import type { AffiliateRecord, AttributionRecord } from "../referralPolicy";
 import { ChannelConfigError } from "./channelRepository";
 
@@ -64,22 +65,13 @@ export function getReferralRepository(): Promise<ReferralRepository> {
 }
 
 async function postgresRepository(databaseUrl: string): Promise<ReferralRepository> {
-  const specifier = "pg";
-  const loaded = (await import(specifier).catch(() => null)) as { Pool: new (config: { connectionString: string }) => PgPool } | null;
-  if (!loaded) {
-    throw new ChannelConfigError("The pg package is not installed, so referral records cannot be stored.");
-  }
-  return new PostgresReferralRepository(new loaded.Pool({ connectionString: databaseUrl }));
+  return new PostgresReferralRepository(new Pool({ connectionString: databaseUrl }));
 }
 
-type PgPool = {
-  query: (text: string, values?: unknown[]) => Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }>;
-};
-
 class PostgresReferralRepository implements ReferralRepository {
-  private readonly pool: PgPool;
+  private readonly pool: Pool;
 
-  constructor(pool: PgPool) {
+  constructor(pool: Pool) {
     this.pool = pool;
   }
 

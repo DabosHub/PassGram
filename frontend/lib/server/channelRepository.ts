@@ -1,3 +1,4 @@
+import { Pool } from "pg";
 import {
   nextActivation,
   nextVerification,
@@ -151,26 +152,15 @@ export function getChannelRepository(): Promise<ChannelRepository> {
 }
 
 async function postgresRepository(databaseUrl: string): Promise<ChannelRepository> {
-  const specifier = "pg";
-  const loaded = (await import(specifier).catch(() => null)) as { Pool: new (config: { connectionString: string }) => PgPool } | null;
-  if (!loaded) {
-    throw new ChannelConfigError("The pg package is not installed, so community records cannot be stored.");
-  }
-  const pool = new loaded.Pool({ connectionString: databaseUrl });
+  // Static import — dynamic `import("pg")` fails under Next/webpack on Vercel.
+  const pool = new Pool({ connectionString: databaseUrl });
   return new PostgresChannelRepository(pool);
 }
 
-type PgPool = {
-  connect: () => Promise<PgClient>;
-  query: (text: string, values?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
-};
-
-type PgClient = PgPool & { release: () => void };
-
 class PostgresChannelRepository implements ChannelRepository {
-  private readonly pool: PgPool;
+  private readonly pool: Pool;
 
-  constructor(pool: PgPool) {
+  constructor(pool: Pool) {
     this.pool = pool;
   }
 
@@ -314,7 +304,7 @@ class PostgresChannelRepository implements ChannelRepository {
   }
 }
 
-async function writeChannel(db: { query: PgPool["query"] }, row: ChannelSnapshot): Promise<void> {
+async function writeChannel(db: { query: Pool["query"] }, row: ChannelSnapshot): Promise<void> {
   await db.query(
     `insert into creator_communities (
       telegram_chat_id, community_id, owner_telegram_user_id, title, description, photo_file_id,

@@ -1,6 +1,8 @@
 @import "tailwindcss";
 
 :root {
+  /* System stack — avoids next/font Google fetch failures on Vercel builds */
+  --font-inter: "SF Pro Display", "Segoe UI", system-ui, -apple-system, sans-serif;
   --pg-blue: #2aabee;
   --pg-blue-press: #1a8fc8;
   --pg-mint: #00c853;

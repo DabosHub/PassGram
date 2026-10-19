@@ -1,0 +1,132 @@
+@import "tailwindcss";
+
+:root {
+  --pg-blue: #2aabee;
+  --pg-blue-press: #1a8fc8;
+  --pg-mint: #00c853;
+  --pg-bg: var(--tg-theme-bg-color, #f6f9fc);
+  --pg-text: var(--tg-theme-text-color, #0d253d);
+  --pg-hint: var(--tg-theme-hint-color, #64748d);
+  --pg-card: var(--tg-theme-secondary-bg-color, #ffffff);
+  --pg-line: #e3e8ee;
+  --pg-input-line: #a8c3de;
+  --pg-tag: #e7f6fd;
+  --pg-ruby: #ea2261;
+  --pg-shadow: 0 1px 3px rgba(0, 55, 112, 0.08);
+  --pg-shadow-float: 0 8px 24px rgba(0, 55, 112, 0.08), 0 2px 6px rgba(0, 55, 112, 0.04);
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --pg-bg: var(--tg-theme-bg-color, #0d253d);
+  --pg-text: var(--tg-theme-text-color, #f6f9fc);
+  --pg-hint: var(--tg-theme-hint-color, #a8c3de);
+  --pg-card: var(--tg-theme-secondary-bg-color, #1c1e54);
+  --pg-line: rgba(227, 232, 238, 0.16);
+  --pg-input-line: rgba(168, 195, 222, 0.45);
+  --pg-tag: rgba(42, 171, 238, 0.16);
+  --pg-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+  --pg-shadow-float: 0 8px 24px rgba(0, 0, 0, 0.32);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --pg-bg: var(--tg-theme-bg-color, #0d253d);
+    --pg-text: var(--tg-theme-text-color, #f6f9fc);
+    --pg-hint: var(--tg-theme-hint-color, #a8c3de);
+    --pg-card: var(--tg-theme-secondary-bg-color, #1c1e54);
+    --pg-line: rgba(227, 232, 238, 0.16);
+    --pg-input-line: rgba(168, 195, 222, 0.45);
+    --pg-tag: rgba(42, 171, 238, 0.16);
+    --pg-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+    --pg-shadow-float: 0 8px 24px rgba(0, 0, 0, 0.32);
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: #f6f9fc;
+  color: var(--pg-text);
+  font-family: var(--font-inter), "SF Pro Display", system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 300;
+  line-height: 1.4;
+  font-feature-settings: "ss01";
+  letter-spacing: 0;
+}
+
+body {
+  min-height: 100dvh;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+h1,
+h2,
+.font-semibold {
+  font-weight: 300;
+  letter-spacing: -0.02em;
+}
+
+button.font-semibold {
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.rounded-3xl {
+  border-radius: 12px;
+  box-shadow: var(--pg-shadow);
+}
+
+.rounded-2xl {
+  border-radius: 8px;
+}
+
+.pg-amount {
+  font-weight: 300;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "ss01", "tnum";
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--pg-blue);
+  outline-offset: 2px;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--pg-hint);
+}
+
+:root[data-theme="dark"] body {
+  background: #061018;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) body {
+    background: #061018;
+  }
+}

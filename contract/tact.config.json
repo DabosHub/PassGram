@@ -1,0 +1,20 @@
+{
+  "projects": [
+    {
+      "name": "PassGramRegistry",
+      "path": "./contracts/passgram_registry.tact",
+      "output": "./build",
+      "options": {
+        "debug": false
+      }
+    },
+    {
+      "name": "PassNft",
+      "path": "./contracts/pass_nft.tact",
+      "output": "./build",
+      "options": {
+        "debug": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,142 @@
+-- Indexer projection of PassGram contract events.
+-- Amounts are USDT base units (6 decimals), stored as text to keep u128 precision.
+
+create table creators (
+    account_id text primary key,
+    payout_account text not null,
+    referrer_account_id text,
+    registered_at_ms bigint not null
+);
+
+create table communities (
+    id bigint primary key,
+    owner_account_id text not null references creators (account_id),
+    name text not null,
+    price text not null,
+    period_seconds bigint not null,
+    telegram_chat_id text,
+    chat_verified boolean not null default false,
+    active boolean not null,
+    created_at_ms bigint not null
+);
+
+create table referrals (
+    code text primary key,
+    referrer_account_id text not null unique
+);
+
+create table subscriptions (
+    community_id bigint not null references communities (id),
+    subscriber_account_id text not null,
+    expires_at_ms bigint not null,
+    last_payment_id bigint not null,
+    primary key (community_id, subscriber_account_id)
+);
+
+create table telegram_wallets (
+    telegram_user_id bigint primary key,
+    near_account_id text not null unique,
+    linked_at timestamptz not null default now()
+);
+
+create table payments (
+    payment_id bigint primary key,
+    community_id bigint not null,
+    subscriber_account_id text not null,
+    creator_account_id text not null,
+    payout_account text not null,
+    gross_amount text not null,
+    creator_amount text not null,
+    treasury_amount text not null,
+    referrer_account_id text,
+    referrer_amount text not null,
+    paid_at_ms bigint not null,
+    expires_at_ms bigint not null,
+    tx_hash text
+);
+
+create index subscriptions_expiry_idx on subscriptions (expires_at_ms);
+
+-- One Telegram channel can belong to one PassGram community.
+create unique index communities_telegram_chat_uidx on communities (telegram_chat_id) where telegram_chat_id is not null;
+
+-- Channel verification is independent of the on-chain USDT community id.
+-- price is an integer USDT amount in 6-decimal base units. duration_days is added to each
+-- subscriber's confirmed payment time, not to created_at.
+-- telegram_member_count is Telegram's member total, not the paid subscriber count.
+create table channel_selection_requests (
+    request_id integer primary key,
+    owner_telegram_user_id bigint not null,
+    prepared_button_id text not null,
+    status text not null,
+    failure_message text,
+    telegram_chat_id text,
+    created_at timestamptz not null default now(),
+    completed_at timestamptz
+);
+
+create index channel_selection_owner_idx on channel_selection_requests (owner_telegram_user_id);
+
+create sequence if not exists creator_communities_community_id_seq;
+
+create table creator_communities (
+    telegram_chat_id text primary key,
+    community_id bigint not null unique default nextval('creator_communities_community_id_seq'),
+    owner_telegram_user_id bigint not null,
+    title text not null,
+    description text,
+    photo_file_id text,
+    telegram_member_count integer,
+    telegram_member_count_fetched_at timestamptz,
+    bot_can_invite_users boolean not null,
+    bot_can_restrict_members boolean not null,
+    verification_status text not null,
+    verified_at timestamptz,
+    payout_account text,
+    price text,
+    duration_days integer,
+    referrer_code text,
+    referrer_telegram_user_id bigint,
+    referral_enabled boolean not null default false,
+    referral_percent_bps integer not null default 0,
+    active boolean not null default false,
+    created_at timestamptz not null default now(),
+    constraint creator_communities_price check (price is null or price ~ '^[1-9][0-9]*$'),
+    constraint creator_communities_duration_days check (duration_days is null or (duration_days >= 1 and duration_days <= 366)),
+    constraint creator_communities_active_ready check (
+        not active
+        or (
+            verification_status = 'verified'
+            and payout_account is not null
+            and price is not null
+            and duration_days is not null
+            and bot_can_invite_users
+            and bot_can_restrict_members
+        )
+    )
+);
+
+create index creator_communities_owner_idx on creator_communities (owner_telegram_user_id);
+create index creator_communities_community_id_idx on creator_communities (community_id);
+
+-- Affiliates and first-touch referral attribution (Telegram-keyed, not wallet-keyed).
+-- Attribution locks when the invitee presses Start on the bot / opens the invite.
+create table affiliates (
+    code text primary key,
+    telegram_user_id bigint not null unique,
+    payout_account text not null,
+    created_at timestamptz not null default now(),
+    constraint affiliates_code_format check (code ~ '^[a-z0-9_-]{4,32}$')
+);
+
+create table referral_attributions (
+    telegram_user_id bigint primary key,
+    referrer_code text not null references affiliates (code),
+    referrer_telegram_user_id bigint not null,
+    source text not null,
+    locked_at timestamptz not null default now(),
+    constraint referral_attributions_source check (source in ('start_webhook', 'mini_app')),
+    constraint referral_attributions_not_self check (telegram_user_id <> referrer_telegram_user_id)
+);
+
+create index referral_attributions_referrer_idx on referral_attributions (referrer_telegram_user_id);

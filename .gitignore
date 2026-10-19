@@ -1,0 +1,49 @@
+# Dependencies (including incomplete / OneDrive sync copies)
+node_modules/
+**/node_modules/**
+**/node_modules.old/**
+**/node_modules.incomplete/**
+**/node_modules.onedrive/**
+frontend/.node/
+
+# Next.js / build
+.next/
+**/out/
+**/dist/
+**/coverage/
+*.tsbuildinfo
+
+# Tact / FunC artifacts (rebuild with `npm run build` in contract/)
+contract/build/
+target/
+*.wasm
+.near/
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.pem
+*.key
+*.p12
+id_rsa*
+mnemonic*
+wallet-check.txt
+
+# Local / tooling
+.vercel/
+.turbo/
+.cache/
+.idea/
+.vscode/
+*.swp
+*.log
+.DS_Store
+Thumbs.db
+__pycache__/
+.venv/
+*.local
+
+# OS / editor junk
+desktop.ini

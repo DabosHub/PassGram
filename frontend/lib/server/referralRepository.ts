@@ -25,12 +25,13 @@ export class MemoryReferralRepository implements ReferralRepository {
   }
 
   async saveAffiliate(row: AffiliateRecord): Promise<AffiliateRecord> {
-    const existingUser = this.affiliatesByUser.get(row.telegramUserId);
-    if (existingUser && existingUser !== row.code) {
-      throw new Error("This Telegram account already has an affiliate code.");
+    const existingCode = this.affiliatesByUser.get(row.telegramUserId);
+    if (existingCode) {
+      const existing = this.affiliatesByCode.get(existingCode);
+      if (existing) return existing;
     }
-    const existingCode = this.affiliatesByCode.get(row.code);
-    if (existingCode && existingCode.telegramUserId !== row.telegramUserId) {
+    const existingByCode = this.affiliatesByCode.get(row.code);
+    if (existingByCode && existingByCode.telegramUserId !== row.telegramUserId) {
       throw new Error("Referral code is already taken.");
     }
     this.affiliatesByCode.set(row.code, row);
@@ -87,11 +88,10 @@ class PostgresReferralRepository implements ReferralRepository {
 
   async saveAffiliate(row: AffiliateRecord): Promise<AffiliateRecord> {
     await this.pool.query(
-      `insert into affiliates (code, telegram_user_id, payout_account, created_at)
-       values ($1, $2, $3, $4)
-       on conflict (telegram_user_id) do update set payout_account = excluded.payout_account
-       returning *`,
-      [row.code, row.telegramUserId, row.payoutAccount, row.createdAt],
+      `insert into affiliates (code, telegram_user_id, payout_account, signer_address, created_at)
+       values ($1, $2, $3, $4, $5)
+       on conflict (telegram_user_id) do nothing`,
+      [row.code, row.telegramUserId, row.payoutAccount, row.signerAddress || null, row.createdAt],
     );
     const saved = await this.getAffiliateByTelegramUserId(row.telegramUserId);
     if (!saved) throw new Error("Affiliate could not be saved.");
@@ -120,6 +120,7 @@ function mapAffiliate(row: Record<string, unknown>): AffiliateRecord {
     code: String(row.code),
     telegramUserId: String(row.telegram_user_id),
     payoutAccount: String(row.payout_account),
+    signerAddress: typeof row.signer_address === "string" && row.signer_address ? row.signer_address : null,
     createdAt: new Date(String(row.created_at)).toISOString(),
   };
 }

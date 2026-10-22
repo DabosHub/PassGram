@@ -7,7 +7,7 @@
     "start": "node --experimental-strip-types src/index.ts",
     "indexer": "node --experimental-strip-types src/indexer.ts",
     "cron": "node --experimental-strip-types src/cron.ts",
-    "test": "node --test src/split.test.mjs"
+    "test": "node --test src/split.test.mjs && node --experimental-strip-types --test src/reminder.test.ts src/walletKey.test.ts src/channelMember.test.ts src/inviteLink.test.ts src/referralNotice.test.ts"
   },
   "dependencies": {
     "@ton/core": "^0.62.1",

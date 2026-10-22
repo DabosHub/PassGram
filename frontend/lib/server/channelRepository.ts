@@ -103,13 +103,14 @@ export class MemoryChannelRepository implements ChannelRepository {
       referralEnabled: current?.referralEnabled ?? row.referralEnabled ?? false,
       referralPercentBps: current?.referralPercentBps ?? row.referralPercentBps ?? 0,
       active: current?.active ?? false,
+      paused: current?.paused ?? row.paused ?? false,
     });
     return "saved";
   }
 
   async listReferralEnabledCommunities(): Promise<ChannelSnapshot[]> {
     return [...this.state.channels.values()]
-      .filter((row) => row.active && row.referralEnabled && row.referralPercentBps > 0 && row.communityId != null)
+      .filter((row) => row.active && !row.paused && row.referralEnabled && row.referralPercentBps > 0 && row.communityId != null)
       .map((row) => ({ ...row }))
       .sort((a, b) => (b.communityId ?? 0) - (a.communityId ?? 0));
   }
@@ -214,6 +215,7 @@ class PostgresChannelRepository implements ChannelRepository {
         referralEnabled: existing?.referralEnabled ?? row.referralEnabled ?? false,
         referralPercentBps: existing?.referralPercentBps ?? row.referralPercentBps ?? 0,
         active: existing?.active ?? false,
+        paused: existing?.paused ?? row.paused ?? false,
       };
       await writeChannel(client, stored);
       await client.query("commit");
@@ -245,6 +247,7 @@ class PostgresChannelRepository implements ChannelRepository {
     const result = await this.pool.query(
       `select * from creator_communities
        where active = true
+         and coalesce(paused, false) = false
          and coalesce(referral_enabled, false) = true
          and coalesce(referral_percent_bps, 0) > 0
          and community_id is not null
@@ -311,11 +314,11 @@ async function writeChannel(db: { query: Pool["query"] }, row: ChannelSnapshot):
       telegram_member_count, telegram_member_count_fetched_at,
       bot_can_invite_users, bot_can_restrict_members, verification_status, verified_at,
       payout_account, price, duration_days, referrer_code, referrer_telegram_user_id,
-      referral_enabled, referral_percent_bps, active
+      referral_enabled, referral_percent_bps, active, paused
     ) values (
       $1,
       coalesce($2, nextval('creator_communities_community_id_seq')),
-      $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
+      $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
     )
     on conflict (telegram_chat_id) do update set
       owner_telegram_user_id = excluded.owner_telegram_user_id,
@@ -336,6 +339,7 @@ async function writeChannel(db: { query: Pool["query"] }, row: ChannelSnapshot):
       referral_enabled = excluded.referral_enabled,
       referral_percent_bps = excluded.referral_percent_bps,
       active = excluded.active,
+      paused = excluded.paused,
       community_id = coalesce(creator_communities.community_id, excluded.community_id)`,
     [
       row.telegramChatId,
@@ -358,6 +362,7 @@ async function writeChannel(db: { query: Pool["query"] }, row: ChannelSnapshot):
       row.referralEnabled,
       row.referralPercentBps,
       row.active,
+      Boolean(row.paused),
     ],
   );
 }
@@ -395,5 +400,6 @@ function mapChannel(row: Record<string, unknown>): ChannelSnapshot {
     referralEnabled: Boolean(row.referral_enabled),
     referralPercentBps: row.referral_percent_bps == null ? 0 : Number(row.referral_percent_bps),
     active: Boolean(row.active),
+    paused: Boolean(row.paused),
   };
 }

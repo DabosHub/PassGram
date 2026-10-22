@@ -37,7 +37,19 @@ function TonConnectAdapterSync({ onAddress }: { onAddress?: (address: string | n
         const result = await tonConnectUI.sendTransaction(tx);
         return result ? { boc: result.boc } : null;
       },
-      account: tonConnectUI.account,
+      signData: async (data) => {
+        const result = await tonConnectUI.signData(data);
+        return {
+          signature: result.signature,
+          address: result.address,
+          timestamp: result.timestamp,
+          domain: result.domain,
+        };
+      },
+      account: {
+        address: tonConnectUI.account?.address,
+        publicKey: tonConnectUI.account?.publicKey,
+      },
     });
     onAddress?.(wallet?.account.address ?? null);
     return () => setTonConnectAdapter(null);

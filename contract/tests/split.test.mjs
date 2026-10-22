@@ -25,7 +25,7 @@ function computeCommunityAwareSplit(gross, hasPlatformReferrer, communityReferra
       : communityReferralBps > MAX_COMMUNITY_REFERRAL_BPS
         ? MAX_COMMUNITY_REFERRAL_BPS
         : communityReferralBps;
-  const communityAffiliate = (gross * bps) / BPS;
+  const communityAffiliate = (base.creator * bps) / BPS;
   const creator = base.creator - communityAffiliate;
   if (creator < 0n) {
     return { ...base, creator: 0n, communityAffiliate: base.creator };
@@ -55,8 +55,8 @@ test("community referral is taken from creator share on-chain", () => {
   const gross = 1_000_000n;
   const s = computeCommunityAwareSplit(gross, false, 1000n); // 10%
   assert.equal(s.treasury, 25_000n);
-  assert.equal(s.communityAffiliate, 100_000n);
-  assert.equal(s.creator, 875_000n);
+  assert.equal(s.communityAffiliate, 97_500n);
+  assert.equal(s.creator, 877_500n);
   assert.equal(s.creator + s.treasury + s.referrer + s.communityAffiliate, gross);
 });
 
@@ -65,8 +65,8 @@ test("platform + community referral stack correctly", () => {
   const s = computeCommunityAwareSplit(gross, true, 1000n);
   assert.equal(s.referrer, 5_000n);
   assert.equal(s.treasury, 20_000n);
-  assert.equal(s.communityAffiliate, 100_000n);
-  assert.equal(s.creator, 875_000n);
+  assert.equal(s.communityAffiliate, 97_500n);
+  assert.equal(s.creator, 877_500n);
   assert.equal(s.creator + s.treasury + s.referrer + s.communityAffiliate, gross);
 });
 

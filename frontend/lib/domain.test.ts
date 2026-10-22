@@ -15,6 +15,7 @@ import {
   policyExample,
   rankAffiliates,
   remainingLabel,
+  renewalWindowOpen,
   subscriptionActions,
   subscriptionProgress,
   subscriptionStatus,
@@ -62,6 +63,11 @@ test("subscription status distinguishes expired from unconfirmed", () => {
   assert.equal(remainingLabel(now, now, true), "Expired");
   assert.equal(remainingLabel(now + day, now, false), "Not confirmed");
   assert.match(remainingLabel(now + 5 * day, now, true), /5 days left/);
+  assert.equal(renewalWindowOpen(now + 2 * day, now, true), false);
+  assert.equal(renewalWindowOpen(now + day, now, true), true);
+  assert.equal(renewalWindowOpen(now + 60 * 60 * 1000, now, true), true);
+  assert.equal(renewalWindowOpen(now, now, true), false);
+  assert.equal(renewalWindowOpen(now + day, now, false), false);
 });
 
 test("dashboard section follows ownership and memory", () => {
@@ -174,26 +180,26 @@ test("referral codes are short and links look like Telegram invites", () => {
   assert.equal(suggestReferralCode({ telegramUsername: null, telegramUserId: null, userId: "local:a1c1f8bcc95d422090bab6c00" }), "gbab6c00");
   const previous = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
   delete process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
-  assert.equal(formatReferralLink("mira", "http://localhost:3000"), "t.me/PassGramBot?start=ref_mira");
+  assert.equal(formatReferralLink("mira", "http://localhost:3000"), "https://t.me/PassGramBot/passgram?startapp=ref_mira");
   process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME = "PassGramBot";
-  assert.equal(formatReferralLink("mira", "http://localhost:3000"), "https://t.me/PassGramBot?start=ref_mira");
-  assert.equal(formatCommunityLink(42, "http://localhost:3000"), "https://t.me/PassGramBot?start=c_42");
+  assert.equal(formatReferralLink("mira", "http://localhost:3000"), "https://t.me/PassGramBot/passgram?startapp=ref_mira");
+  assert.equal(formatCommunityLink(42, "http://localhost:3000"), "https://t.me/PassGramBot/passgram?startapp=c_42");
   assert.equal(
     formatCommunityReferralLink(42, "mira", "http://localhost:3000"),
-    "https://t.me/PassGramBot?start=c_42_cref_mira",
+    "https://t.me/PassGramBot/passgram?startapp=c_42_cref_mira",
   );
   delete process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
-  assert.equal(formatReferralLink("mira", "https://app.passgram.example"), "https://app.passgram.example/?ref=mira");
+  assert.equal(formatReferralLink("mira", "https://app.passgram.example"), "https://t.me/PassGramBot/passgram?startapp=ref_mira");
   if (previous == null) delete process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
   else process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME = previous;
 });
 
 test("community referral cut comes from creator share after platform fee", () => {
   const gross = 1_000_000n;
-  const split = computeCommunityAwareSplit(gross, false, 1000n); // 10% of gross
+  const split = computeCommunityAwareSplit(gross, false, 1000n); // 10% of the creator share
   assert.equal(split.treasury, 25_000n);
-  assert.equal(split.communityAffiliate, 100_000n);
-  assert.equal(split.creator, 875_000n);
+  assert.equal(split.communityAffiliate, 97_500n);
+  assert.equal(split.creator, 877_500n);
   assert.equal(split.creator + split.treasury + split.referrer + split.communityAffiliate, gross);
 });
 

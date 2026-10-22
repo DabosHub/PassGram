@@ -2,7 +2,10 @@
 
 import type { ReactNode } from "react";
 import { AppShell } from "@/components/AppShell";
+import { DemoLab } from "@/components/DemoLab";
 import { TonConnectProvider } from "@/components/TonConnectBridge";
+import { DemoLabProvider } from "@/lib/demoLabContext";
+import { RouteProvider } from "@/lib/routeContext";
 import { StoreProvider, useStore } from "@/lib/store";
 
 function WalletSync({ children }: { children: ReactNode }) {
@@ -17,9 +20,14 @@ function WalletSync({ children }: { children: ReactNode }) {
 export default function HomePage() {
   return (
     <StoreProvider>
-      <WalletSync>
-        <AppShell />
-      </WalletSync>
+      <RouteProvider>
+        <DemoLabProvider>
+          <WalletSync>
+            <AppShell />
+            <DemoLab />
+          </WalletSync>
+        </DemoLabProvider>
+      </RouteProvider>
     </StoreProvider>
   );
 }

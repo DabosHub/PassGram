@@ -9,12 +9,12 @@ export async function POST(request: Request, context: { params: Promise<{ commun
     }
     const body = (await request.json()) as { enabled?: unknown; percent?: unknown };
     const enabled = Boolean(body.enabled);
-    const percent = typeof body.percent === "number" ? body.percent : Number(body.percent);
+    const percent = body.percent == null ? "" : String(body.percent);
     const deps = await buildChannelDeps();
     const result = await updateCommunityReferralSettings(deps, initDataFrom(request), {
       communityId: Number(raw),
       enabled,
-      percent: enabled ? percent : 0,
+      percent,
     });
     return Response.json(result, { status: result.ok ? 200 : 400 });
   } catch (error) {

@@ -5,7 +5,7 @@ export type AccountPage = "hub" | "analytics" | "notifications" | "policies";
 
 export type AppRoute = {
   tab: TabId;
-  screen: "home" | "account" | "community" | "subscription" | "manage";
+  screen: "home" | "account" | "community" | "subscription" | "manage" | "settings";
   accountPage: AccountPage;
   communityId: number | null;
   referralCode: string | null;
@@ -40,6 +40,30 @@ export function resolveRoute(search: string, startParam?: string | null): AppRou
       screen: "account",
       accountPage,
       communityId: null,
+      referralCode,
+      communityReferralCode,
+      linkError,
+    };
+  }
+
+  const settings = readId(params.get("settings"));
+  if (settings.error) {
+    return {
+      tab: "dashboard",
+      screen: "community",
+      accountPage: "hub",
+      communityId: null,
+      referralCode,
+      communityReferralCode,
+      linkError: "invalid_community",
+    };
+  }
+  if (settings.id) {
+    return {
+      tab: "dashboard",
+      screen: "settings",
+      accountPage: "hub",
+      communityId: settings.id,
       referralCode,
       communityReferralCode,
       linkError,
@@ -146,7 +170,8 @@ export function routeToPath(route: AppRoute): string {
   const params = new URLSearchParams();
   if (route.screen === "account") {
     params.set("account", route.accountPage === "hub" ? "1" : route.accountPage);
-  } else if (route.screen === "manage" && route.communityId) params.set("manage", String(route.communityId));
+  } else if (route.screen === "settings" && route.communityId) params.set("settings", String(route.communityId));
+  else if (route.screen === "manage" && route.communityId) params.set("manage", String(route.communityId));
   else if (route.screen === "subscription" && route.communityId) params.set("subscription", String(route.communityId));
   else if (route.screen === "community" && route.communityId) params.set("community", String(route.communityId));
   else if (route.tab !== "dashboard") params.set("tab", route.tab);

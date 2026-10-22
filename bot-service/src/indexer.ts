@@ -1,5 +1,7 @@
+import { isInsideChannel } from "./channelMember.ts";
 import { loadConfig } from "./config.ts";
-import { communityChatId, createPool, storeInviteLink, upsertPaymentAndSubscription } from "./db.ts";
+import { communityChatId, communityReferralConversion, createPool, storeInviteLink, storeMembershipInvite, telegramUserIdForTonWallet, upsertPaymentAndSubscription } from "./db.ts";
+import { notifyCommunityReferralPaid } from "./referralNotice.ts";
 import { createTelegramClient } from "./telegram.ts";
 import { fetchRegistryTransactions, parseSubscriptionHint } from "./tonApi.ts";
 
@@ -39,14 +41,38 @@ export async function runIndexerOnce(): Promise<number> {
         expiresAtMs,
         referrer: hint.hasReferrer ? "referrer" : null,
       };
-      const { paymentId, inviteNeeded } = await upsertPaymentAndSubscription(pool, event);
+      const telegramUserId = await telegramUserIdForTonWallet(pool, event.subscriber);
+      const { paymentId, inviteNeeded } = await upsertPaymentAndSubscription(pool, { ...event, telegramUserId });
       seen.add(tx.txHash);
       handled += 1;
+      if (inviteNeeded && telegramUserId) {
+        try {
+          const conversion = await communityReferralConversion(pool, hint.communityId, telegramUserId);
+          await notifyCommunityReferralPaid({
+            lookup: conversion,
+            subscriberTelegramUserId: telegramUserId,
+            communityId: hint.communityId,
+            send: (userId, text, button) => telegram.sendDirectMessage(userId, text, button),
+          });
+        } catch (error) {
+          console.error("referral conversion notice failed", error);
+        }
+      }
       if (inviteNeeded) {
         const chatId = await communityChatId(pool, hint.communityId);
         if (chatId) {
-          const link = await telegram.createChatInviteLink(chatId, Math.floor(event.expiresAtMs / 1000));
-          if (link) await storeInviteLink(pool, paymentId, link);
+          let inside = false;
+          if (telegramUserId) {
+            const member = await telegram.chatMember(chatId, telegramUserId);
+            inside = isInsideChannel(member?.status, member?.is_member);
+          }
+          if (!inside) {
+            const link = await telegram.createChatInviteLink(chatId, Math.floor(event.expiresAtMs / 1000));
+            if (link) {
+              await storeInviteLink(pool, paymentId, link);
+              await storeMembershipInvite(pool, event.txHash, link);
+            }
+          }
         }
       }
     }

@@ -9,20 +9,24 @@ export type SubscribeIntent = {
   communityId: number;
   amount: string;
   to: string;
-  hasPlatformReferrer: boolean;
   hasCommunityReferrer: boolean;
+  communityReferralBps?: number;
 };
 
 /**
  * Builds / sends a USDT Jetton transfer to the PassGram registry with a subscribe payload.
- * Community referrer (if any) is included so the contract can take R% from the creator share on-chain.
+ * The optional address is the community referrer's payout wallet. PassGram's affiliate is paid from the address stored on the community.
  */
 export async function sendSubscriptionPayment(input: {
   communityId: number;
   amount: string;
   jettonWalletAddress?: string;
-  hasPlatformReferrer?: boolean;
+  /** Community referrer payout wallet from the database. */
   communityReferrerAddress?: string | null;
+  communityReferralBps?: number | null;
+  /** Base64 owner signature of the referral authorization cell. */
+  referralAuthorization?: string | null;
+  referralAuthorizationValidUntil?: number | null;
 }): Promise<WalletSendResult> {
   const hasCommunityReferrer = Boolean(input.communityReferrerAddress?.trim());
   const intent: SubscribeIntent = {
@@ -30,12 +34,12 @@ export async function sendSubscriptionPayment(input: {
     communityId: input.communityId,
     amount: input.amount,
     to: tonConfig.registryAddress || "unconfigured",
-    hasPlatformReferrer: Boolean(input.hasPlatformReferrer),
     hasCommunityReferrer,
+    communityReferralBps: input.communityReferralBps ?? undefined,
   };
 
   const responseAddress = getConnectedTonAddress();
-  if (!contractIsConfigured() || !responseAddress) {
+  if (!contractIsConfigured() || !responseAddress || !input.referralAuthorization || !input.referralAuthorizationValidUntil) {
     return { status: "prepared", intent };
   }
 
@@ -47,8 +51,9 @@ export async function sendSubscriptionPayment(input: {
 
   const forwardPayload = buildSubscribeForwardPayload({
     communityId: input.communityId,
-    hasPlatformReferrer: Boolean(input.hasPlatformReferrer),
     communityReferrerAddress: input.communityReferrerAddress,
+    validUntil: input.referralAuthorizationValidUntil,
+    authorization: input.referralAuthorization,
   });
   const boc = await sendViaAdapter({
     jettonWalletAddress,
@@ -64,13 +69,15 @@ export async function sendSubscriptionPayment(input: {
 /** @deprecated use buildSubscribeForwardPayload */
 export function buildSubscribePayload(
   communityId: number,
-  hasReferrer = false,
-  communityReferrerAddress?: string | null,
+  communityReferrerAddress: string | null | undefined,
+  validUntil: number,
+  authorization: string,
 ): string {
   return buildSubscribeForwardPayload({
     communityId,
-    hasPlatformReferrer: hasReferrer,
     communityReferrerAddress,
+    validUntil,
+    authorization,
   });
 }
 

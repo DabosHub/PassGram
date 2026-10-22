@@ -34,14 +34,14 @@ export function computeSplit(gross: bigint, hasReferrer: boolean): Split {
   return { creator: gross - treasury, treasury, referrer: 0n };
 }
 
-/** Max community referral as percent of gross (50%). Leaves room after 2.5% platform fee. */
+/** Max community referral as a percent of the creator share (50%), after the 2.5% platform fee. */
 export const MAX_COMMUNITY_REFERRAL_BPS = 5000n;
 
 export type CommunityAwareSplit = Split & { communityAffiliate: bigint };
 
 /**
- * Platform fee first, then community affiliate from the remaining creator bucket
- * as R% of gross (creator-configured). Subscriber price is unchanged.
+ * Platform fee first. The community affiliate is then R% of the remaining creator share.
+ * The subscriber price is unchanged.
  */
 export function computeCommunityAwareSplit(
   gross: bigint,
@@ -50,7 +50,7 @@ export function computeCommunityAwareSplit(
 ): CommunityAwareSplit {
   const base = computeSplit(gross, hasPlatformReferrer);
   const bps = communityReferralBps < 0n ? 0n : communityReferralBps > MAX_COMMUNITY_REFERRAL_BPS ? MAX_COMMUNITY_REFERRAL_BPS : communityReferralBps;
-  const communityAffiliate = (gross * bps) / BPS;
+  const communityAffiliate = (base.creator * bps) / BPS;
   const creator = base.creator - communityAffiliate;
   if (creator < 0n) {
     return { ...base, creator: 0n, communityAffiliate: base.creator };
@@ -60,6 +60,21 @@ export function computeCommunityAwareSplit(
 
 export function communityReferralPercentValid(percent: number): boolean {
   return Number.isInteger(percent) && percent >= 1 && percent <= 50;
+}
+
+/** 0.01%–50% with up to 2 decimal places, as basis points (1 = 0.01%). */
+export function parseCommunityReferralBps(raw: string): number | null {
+  const trimmed = raw.trim().replace(/%$/, "").trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return null;
+  const [whole, frac = ""] = trimmed.split(".");
+  const bps = Number(whole) * 100 + Number(frac.padEnd(2, "0"));
+  if (!Number.isInteger(bps) || bps < 1 || bps > 5000) return null;
+  return bps;
+}
+
+export function formatCommunityReferralPercent(bps: number): string {
+  const text = (bps / 100).toFixed(2).replace(/\.?0+$/, "");
+  return text || "0";
 }
 
 export function percentToBps(percent: number): number {

@@ -32,23 +32,25 @@ export async function registerAffiliate(
   initData: string,
   payoutAccount: string,
   telegramUsername?: string | null,
+  signerAddress?: string | null,
 ): Promise<ReferralResult> {
   const identity = validateInitData(initData, deps.botToken, deps.now() / 1000);
   if (!identity) return fail("Open PassGram from Telegram so your account can be confirmed.");
   const payout = normalizeTonAddress(payoutAccount);
   if (!payout) return fail("Enter a TON payout address (EQ… / UQ… or 0:…).");
+  const signer = signerAddress ? normalizeTonAddress(signerAddress) : null;
+  if (signerAddress && !signer) return fail("The signing wallet could not be read.");
   const status = await deps.accountStatus(payout);
   if (status === "missing") return fail("That TON address is invalid. No payment was sent.");
   if (status === "unknown") return fail("The TON address could not be confirmed. No payment was sent.");
   const existing = await deps.repo.getAffiliateByTelegramUserId(String(identity.userId));
   if (existing) {
-    const updated = await deps.repo.saveAffiliate({ ...existing, payoutAccount: payout });
     return {
       ok: true,
-      message: "Affiliate payout account updated.",
+      message: "This referral link is already active. The payout address stays as first recorded.",
       result: "exists",
-      affiliate: updated,
-      linkPath: `ref_${updated.code}`,
+      affiliate: existing,
+      linkPath: `ref_${existing.code}`,
     };
   }
   let code = buildAffiliateCode({ telegramUsername, telegramUserId: identity.userId });
@@ -64,6 +66,7 @@ export async function registerAffiliate(
     code: normalized,
     telegramUserId: String(identity.userId),
     payoutAccount: payout,
+    signerAddress: signer,
     createdAt: new Date(deps.now()).toISOString(),
   });
   return {

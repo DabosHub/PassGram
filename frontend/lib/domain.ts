@@ -3,6 +3,8 @@ import { computeSplit, formatUsdt, normalizeCode, parseUsdt } from "./money";
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
 export const EXPIRING_SOON_MS = 3 * DAY_MS;
+/** A confirmed subscriber can renew only during the final 24 hours. */
+export const RENEWAL_WINDOW_MS = DAY_MS;
 export const PAGE_SIZE = 8;
 
 export type Confirmation = "unconfirmed" | "confirmed";
@@ -50,6 +52,12 @@ export function subscriptionStatus(input: {
   if (input.expiresAt == null || input.expiresAt <= input.now) return "expired";
   if (input.expiresAt - input.now <= EXPIRING_SOON_MS) return "expiring_soon";
   return "active";
+}
+
+export function renewalWindowOpen(expiresAt: number | null, now: number, confirmed: boolean): boolean {
+  if (!confirmed || expiresAt == null) return false;
+  const left = expiresAt - now;
+  return left > 0 && left <= RENEWAL_WINDOW_MS;
 }
 
 export function remainingLabel(expiresAt: number | null, now: number, confirmed: boolean): string {
@@ -303,42 +311,47 @@ export function referralBotUsername(): string {
   return (process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || "").trim().replace(/^@/, "");
 }
 
-/** Prefer a normal Telegram invite link. Falls back to a short web path when the bot username is unset. */
-export function formatReferralLink(code: string, origin?: string | null): string {
-  const safe = normalizeCode(code);
-  if (!safe) return "";
-  const bot = referralBotUsername();
-  if (bot) return `https://t.me/${bot}?start=ref_${safe}`;
-  if (origin && !/localhost|127\.0\.0\.1/i.test(origin)) return `${origin.replace(/\/$/, "")}/?ref=${safe}`;
-  return `t.me/PassGramBot?start=ref_${safe}`;
+/** BotFather Mini App short name. Direct links are t.me/<bot>/<short_name>?startapp=… */
+export function miniAppShortName(): string {
+  return (process.env.NEXT_PUBLIC_TELEGRAM_MINI_APP_SHORT_NAME || "passgram").trim().replace(/^@/, "") || "passgram";
 }
 
-/** Public subscription link for a PassGram community. Prefer Telegram start deep link. */
-export function formatCommunityLink(communityId: number, origin?: string | null): string {
+/**
+ * Opens the Mini App itself (not the bot chat).
+ * `startapp` becomes WebApp start_param. Telegram prompts first-time users to start the bot, then opens the app.
+ */
+export function formatMiniAppLink(startParam: string): string {
+  const bot = referralBotUsername() || "PassGramBot";
+  const app = miniAppShortName();
+  return `https://t.me/${bot}/${app}?startapp=${startParam}`;
+}
+
+/**
+ * Opens the Mini App directly. Telegram only forwards `startapp` into the app as start_param.
+ * `?start=` opens the bot chat instead, so the referral code would never reach PassGram.
+ */
+export function formatReferralLink(code: string, _origin?: string | null): string {
+  const safe = normalizeCode(code);
+  if (!safe) return "";
+  return formatMiniAppLink(`ref_${safe}`);
+}
+
+/** Public subscription link. Opens the Mini App on that community card. */
+export function formatCommunityLink(communityId: number, _origin?: string | null): string {
   if (!Number.isSafeInteger(communityId) || communityId < 1) return "";
-  const bot = referralBotUsername();
-  if (bot) return `https://t.me/${bot}?start=c_${communityId}`;
-  if (origin && !/localhost|127\.0\.0\.1/i.test(origin)) {
-    return `${origin.replace(/\/$/, "")}/?community=${communityId}`;
-  }
-  return `t.me/PassGramBot?start=c_${communityId}`;
+  return formatMiniAppLink(`c_${communityId}`);
 }
 
 /** Promoter link for a community with referrals enabled: c_<id>_cref_<code>. */
 export function formatCommunityReferralLink(
   communityId: number,
   code: string,
-  origin?: string | null,
+  _origin?: string | null,
 ): string {
   if (!Number.isSafeInteger(communityId) || communityId < 1) return "";
   const safe = normalizeCode(code);
   if (!safe) return "";
-  const bot = referralBotUsername();
-  if (bot) return `https://t.me/${bot}?start=c_${communityId}_cref_${safe}`;
-  if (origin && !/localhost|127\.0\.0\.1/i.test(origin)) {
-    return `${origin.replace(/\/$/, "")}/?community=${communityId}&cref=${safe}`;
-  }
-  return `t.me/PassGramBot?start=c_${communityId}_cref_${safe}`;
+  return formatMiniAppLink(`c_${communityId}_cref_${safe}`);
 }
 
 export function referralPath(code: string): string {

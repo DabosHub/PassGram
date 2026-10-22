@@ -1,5 +1,4 @@
 import { buildChannelDeps, channelFailure, initDataFrom } from "@/lib/server/channelDeps";
-import { buildReferralDeps } from "@/lib/server/referralDeps";
 import {
   attributeCommunityReferral,
   getCommunityReferralRepository,
@@ -14,11 +13,9 @@ export async function POST(request: Request) {
       return Response.json({ ok: false, message: "Community id and code are required." }, { status: 400 });
     }
     const channelDeps = await buildChannelDeps();
-    const referralDeps = await buildReferralDeps();
     const communityRepo = await getCommunityReferralRepository();
     const result = await attributeCommunityReferral(
       channelDeps,
-      referralDeps,
       communityRepo,
       initDataFrom(request),
       communityId,

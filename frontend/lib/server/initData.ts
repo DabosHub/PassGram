@@ -2,7 +2,12 @@ import crypto from "node:crypto";
 
 const MAX_AUTH_AGE_SECONDS = 24 * 60 * 60;
 
-export type MiniAppIdentity = { userId: number };
+export type MiniAppIdentity = {
+  userId: number;
+  displayName: string;
+  username: string;
+  photoUrl: string;
+};
 
 function safeEqual(left: string, right: string): boolean {
   const a = Buffer.from(left);
@@ -31,12 +36,19 @@ export function validateInitData(initData: string, botToken: string, nowSeconds 
   }
   const userRaw = params.get("user");
   if (!userRaw) return null;
-  let user: { id?: unknown };
+  let user: { id?: unknown; first_name?: unknown; last_name?: unknown; username?: unknown; photo_url?: unknown };
   try {
-    user = JSON.parse(userRaw) as { id?: unknown };
+    user = JSON.parse(userRaw) as { id?: unknown; first_name?: unknown; last_name?: unknown; username?: unknown; photo_url?: unknown };
   } catch {
     return null;
   }
   if (typeof user.id !== "number" || !Number.isSafeInteger(user.id) || user.id <= 0) return null;
-  return { userId: user.id };
+  const firstName = typeof user.first_name === "string" ? user.first_name.trim() : "";
+  const lastName = typeof user.last_name === "string" ? user.last_name.trim() : "";
+  return {
+    userId: user.id,
+    displayName: [firstName, lastName].filter(Boolean).join(" "),
+    username: typeof user.username === "string" ? user.username.trim().replace(/^@/, "") : "",
+    photoUrl: typeof user.photo_url === "string" ? user.photo_url.trim() : "",
+  };
 }

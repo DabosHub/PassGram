@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
+import { MAX_DURATION_DAYS, MIN_DURATION_DAYS } from "@/lib/channelPolicy";
 import { activePassgramCount, feePolicy } from "@/lib/domain";
-import { formatDate, formatUsdt } from "@/lib/money";
+import { MAX_COMMUNITY_REFERRAL_BPS, formatDate, formatUsdt } from "@/lib/money";
+import { MAX_PRICE, MIN_PRICE, PLATFORM_FEE_BPS, REFERRER_FEE_BPS } from "@/lib/ton/config";
 import type { AccountPage, AppRoute } from "@/lib/route";
 import { useStore } from "@/lib/store";
 import { Avatar, useNow } from "./ui";
@@ -12,14 +14,18 @@ const NOTIFY_STORAGE_KEY = "passgram.notify.prefs";
 type NotifyPrefs = {
   creatorNewSubscriber: boolean;
   creatorSubscriptionEnded: boolean;
+  creatorReferralLink: boolean;
   subscriberExpiringSoon: boolean;
+  subscriberCommunityReferral: boolean;
   affiliateNewConversion: boolean;
 };
 
 const defaultNotifyPrefs: NotifyPrefs = {
   creatorNewSubscriber: true,
   creatorSubscriptionEnded: true,
+  creatorReferralLink: true,
   subscriberExpiringSoon: true,
+  subscriberCommunityReferral: true,
   affiliateNewConversion: true,
 };
 
@@ -65,7 +71,6 @@ function AccountHub({ go }: { go: (next: AppRoute, replace?: boolean) => void })
         <div className="mt-3 space-y-1 text-sm text-[var(--pg-hint)]">
           <p>Joined {formatDate(store.user.createdAt)}</p>
           <p>Telegram id: {store.user.telegramUserId ? String(store.user.telegramUserId) : "Not provided"}</p>
-          <p>Referral lock: {store.user.referralLocked && store.user.referralCode ? store.user.referralCode : "None"}</p>
         </div>
       </section>
 
@@ -113,16 +118,14 @@ function AnalyticsPage() {
     .filter((item) => item.status === "confirmed" && affiliate)
     .reduce((sum, payment) => sum + BigInt(payment.affiliateAmount), 0n);
   const communityReferralEarnings = store.payments
-    .filter((item) => item.status === "confirmed" && affiliate)
+    .filter((item) => item.status === "confirmed")
     .reduce((sum, payment) => sum + BigInt(payment.communityAffiliateAmount || "0"), 0n);
   const successfulReferrals = affiliate
     ? store.payments.filter((item) => item.status === "confirmed" && BigInt(item.affiliateAmount) > 0n).length
     : 0;
-  const successfulCommunityReferrals = affiliate
-    ? store.payments.filter(
-        (item) => item.status === "confirmed" && BigInt(item.communityAffiliateAmount || "0") > 0n,
-      ).length
-    : 0;
+  const successfulCommunityReferrals = store.payments.filter(
+    (item) => item.status === "confirmed" && BigInt(item.communityAffiliateAmount || "0") > 0n,
+  ).length;
 
   return (
     <div className="space-y-4">
@@ -176,15 +179,11 @@ function AnalyticsPage() {
 
       <section className="space-y-2 rounded-3xl border border-[var(--pg-line)] bg-[var(--pg-card)] p-4">
         <h2 className="text-[18px] font-semibold">Communities referral</h2>
-        {!affiliate ? (
-          <p className="text-sm text-[var(--pg-hint)]">Register a PassGram payout address, then promote communities with referrals enabled.</p>
-        ) : (
-          <ul className="space-y-1 text-sm">
-            <Stat label="Successful community referrals" value={String(successfulCommunityReferrals)} />
-            <Stat label="Confirmed community earnings" value={`${formatUsdt(communityReferralEarnings)} USDT`} />
-            <Stat label="Source" value="Creator share (per community rate)" />
-          </ul>
-        )}
+        <ul className="space-y-1 text-sm">
+          <Stat label="Successful community referrals" value={String(successfulCommunityReferrals)} />
+          <Stat label="Confirmed community earnings" value={`${formatUsdt(communityReferralEarnings)} USDT`} />
+          <Stat label="Source" value="Creator share (per community rate)" />
+        </ul>
       </section>
     </div>
   );
@@ -235,14 +234,26 @@ function NotificationsPage() {
           onChange={() => toggle("creatorSubscriptionEnded")}
         />
         <NotifyToggle
-          label="Subscription ending in 2 days"
-          description="Subscribers: reminder before your access expires."
+          label="New community referral link"
+          description="Creators: PassGramBot messages you when someone creates a referral link for a community whose referral program is on."
+          checked={notify.creatorReferralLink}
+          onChange={() => toggle("creatorReferralLink")}
+        />
+        <NotifyToggle
+          label="Subscription ending in 1 day"
+          description="Subscribers: PassGramBot messages you on the last day, before channel access is removed."
           checked={notify.subscriberExpiringSoon}
           onChange={() => toggle("subscriberExpiringSoon")}
         />
         <NotifyToggle
+          label="Community referral program"
+          description="Subscribers: PassGramBot messages you when a community you subscribe to starts, changes, or stops its referral program."
+          checked={notify.subscriberCommunityReferral}
+          onChange={() => toggle("subscriberCommunityReferral")}
+        />
+        <NotifyToggle
           label="New referral conversion"
-          description="Affiliates: message when a referred payment is confirmed."
+          description="You: PassGramBot messages you when someone you referred subscribes through a community referral, or creates a community through your PassGram referral."
           checked={notify.affiliateNewConversion}
           onChange={() => toggle("affiliateNewConversion")}
         />
@@ -253,28 +264,91 @@ function NotificationsPage() {
 
 function PoliciesPage() {
   const fees = feePolicy();
+  const creatorShare = (10_000 - Number(PLATFORM_FEE_BPS)) / 100;
+  const platformRemainder = (Number(PLATFORM_FEE_BPS) - Number(REFERRER_FEE_BPS)) / 100;
+  const communityMax = Number(MAX_COMMUNITY_REFERRAL_BPS) / 100;
   return (
     <div className="space-y-4">
       <header>
         <h1 className="text-[26px]">PassGram policies</h1>
-        <p className="mt-1 text-sm text-[var(--pg-hint)]">How the bot, payments, referrals, and privacy work.</p>
+        <p className="mt-1 text-sm text-[var(--pg-hint)]">The rules for access, payments, referrals, and privacy.</p>
       </header>
       <section className="space-y-3 rounded-3xl border border-[var(--pg-line)] bg-[var(--pg-card)] p-4">
-        <PolicyBlock title="Bot access">
-          PassGramBot manages paid channel access after a confirmed USDT payment on TON. The bot invites or admits the subscriber when payment is confirmed, and removes access when the paid period ends. Channel verification requires the bot to be an admin with invite and restrict rights before a community can go live.
-        </PolicyBlock>
-        <PolicyBlock title="Payments">
-          Prices are listed in USDT on TON. PassGram does not add a fee on top of the listed price. Network fees in TON may still apply. A subscription is not treated as active until payment confirmation is available from the indexer.
-        </PolicyBlock>
-        <PolicyBlock title="Fees and referrals">
-          Platform fee is {fees.platformPercent}% of each confirmed payment. When a first-touch referrer is locked, the affiliate earns {fees.affiliateOfPaymentPercent}% of the payment ({fees.affiliateOfFeePercent}% of the platform fee). Referral attribution locks on the first Start / invite touch and does not change later.
-        </PolicyBlock>
-        <PolicyBlock title="Privacy">
-          PassGram uses your Telegram identity from Mini App initData to operate the account. Wallet connection is used to sign payments. Payout accounts are collected when you create a community or a referral link. Do not share private keys. PassGram never asks for your seed phrase.
-        </PolicyBlock>
-        <PolicyBlock title="Account responsibility">
-          Creators are responsible for their channel content and Telegram compliance. Affiliates must not misrepresent PassGram pricing or access. Abuse, fraud, or unauthorized access attempts may result in removal from the program.
-        </PolicyBlock>
+        <PolicyBlock
+          title="Bot access"
+          points={[
+            "PassGramBot opens channel access after a USDT payment is confirmed, and removes it when that subscriber's paid period ends.",
+            "Before a community can be created, the bot must be a channel admin with only Invite users via link and Ban users.",
+            "Each confirmed payment creates a one-person invite for that subscription period. The raw invite stays private. The subscriber sees Join community.",
+            "The paid period starts when that invite is created, whether the subscriber joins immediately or later.",
+            "PassGramBot can message the subscriber on the last day, before access is removed.",
+          ]}
+        />
+        <PolicyBlock
+          title="Payments"
+          points={[
+            "The subscriber pays the listed price in USDT on TON. PassGram adds nothing on top of that price.",
+            `The price is from ${formatUsdt(MIN_PRICE)} to ${formatUsdt(MAX_PRICE)} USDT. The duration is a whole number of days from ${MIN_DURATION_DAYS} to ${MAX_DURATION_DAYS}. That duration belongs to the subscriber, measured from their own confirmed payment.`,
+            "A subscription becomes active only after the payment is confirmed. Submitting the transaction from the wallet leaves payment, access, and registration unconfirmed.",
+            "A payment below the listed price is returned in full and opens no access. A payment above the listed price is settled at that price, and the extra is returned.",
+            "A payment to a deactivated community is returned in full. The community page stays open.",
+            "A new price or duration applies to subscribers and renewals after that change is confirmed. A period already paid stays as purchased.",
+            "The creator sets the payout address when the community is registered, and can replace it from community settings. The wallet that registered the community signs that change. New subscriptions and renewals after confirmation pay the new address. Payments already sent stay where they were paid.",
+            "Wallet actions can require a network fee on TON. That fee is separate from the USDT price.",
+          ]}
+        />
+        <PolicyBlock
+          title="Platform fee"
+          points={[
+            `PassGram keeps ${fees.platformPercent}% of each confirmed payment.`,
+            `The creator's share starts at the remaining ${creatorShare}%. A community referral, when one applies, comes out of that creator share.`,
+            "The creator, PassGram, and any referrer are paid from the confirmed payment itself. There is no later withdrawal step.",
+          ]}
+        />
+        <PolicyBlock
+          title="PassGram referral"
+          points={[
+            "This program pays the person who referred a creator to PassGram.",
+            `That referrer earns ${fees.affiliateOfPaymentPercent}% of each confirmed subscription in the creator's communities. This is ${fees.affiliateOfFeePercent}% of the platform fee. The other ${platformRemainder}% stays with PassGram.`,
+            `A community registered without a PassGram referrer keeps the full ${fees.platformPercent}% with PassGram.`,
+            "The referrer is recorded the first time someone opens PassGram from that referral link, and that record stays with the account. Self-referral is rejected.",
+            "The referrer's payout address is stored when the creator registers the community. Later subscription payments use that stored address.",
+            "Creating the referral link is recorded by PassGram, with no wallet transaction and no network fee. The payout address is required then, and it stays the address recorded with that link.",
+          ]}
+        />
+        <PolicyBlock
+          title="Community referral"
+          points={[
+            `A creator can pay a marketer from the creator's own ${creatorShare}% share. The subscriber price stays the same, and the ${fees.platformPercent}% platform fee stays the same.`,
+            `The creator sets the rate from 0.01% to ${communityMax}% of the creator share, with up to two decimal places. The platform fee is already removed from that share.`,
+            "The marketer and the rate current at that moment are locked on the subscriber's first confirmed payment. Renewals keep that marketer and that rate.",
+            "A first confirmed payment with no marketer stays without a community marketer on later payments by that subscriber.",
+            "A later rate change applies to people who have not paid yet. People who already paid keep the rate from their first payment.",
+            "Stopping the program closes new registrations, including older marketer links. Referrals already locked keep their original rate.",
+            "Deactivating the community pauses the program with it and closes new payments, renewals, and new registrations. The saved price, duration, and rate stay in place. Activating again restores that same rate.",
+            "Creating a community referral link is recorded by PassGram, with no wallet transaction. The payout address is entered for that community alone, and it stays the address recorded with that link. It is separate from any PassGram referral payout.",
+            "The creator receives no community commission on their own community. The subscriber receives no community commission on their own payment.",
+            "One payment can include both a PassGram referral and a community referral. Each follows its own rule above.",
+          ]}
+        />
+        <PolicyBlock
+          title="Privacy"
+          points={[
+            "PassGram uses your Telegram identity from the Mini App to operate the account.",
+            "Your wallet signs community registration, subscription payments, and later updates that require the creator's or marketer's signature.",
+            "Payout addresses are stored when you create a community or a referral link. Settlement pays that address.",
+            "Notification choices saved on this device stay on this device.",
+            "PassGram asks for neither your seed phrase nor your private key.",
+          ]}
+        />
+        <PolicyBlock
+          title="Responsibilities"
+          points={[
+            "Creators are responsible for their channel content and for following Telegram's rules.",
+            "Marketers present the listed price, the access period, and the access a subscriber receives.",
+            "Abuse, fraud, or an attempt to take access or funds without a confirmed payment can remove an account from PassGram.",
+          ]}
+        />
       </section>
     </div>
   );
@@ -340,11 +414,15 @@ function NotifyToggle({
   );
 }
 
-function PolicyBlock({ title, children }: { title: string; children: ReactNode }) {
+function PolicyBlock({ title, points }: { title: string; points: string[] }) {
   return (
     <div className="border-t border-[var(--pg-line)] pt-3 first:border-t-0 first:pt-0">
       <h3 className="text-[15px] font-semibold">{title}</h3>
-      <p className="mt-1 text-sm leading-relaxed text-[var(--pg-hint)]">{children}</p>
+      <ul className="mt-2 list-disc space-y-1.5 pl-5 text-sm leading-relaxed text-[var(--pg-hint)]">
+        {points.map((point) => (
+          <li key={point}>{point}</li>
+        ))}
+      </ul>
     </div>
   );
 }

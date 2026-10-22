@@ -8,7 +8,7 @@
  *   USDT_JETTON_MASTER=kQD0GKBM8ZbryVk2aESmzfU6b9b_8era_IkvBSELujFZPsyy
  *   TONCENTER_API_KEY=...
  *   DEPLOY_TON_AMOUNT=0.25        (TON attached to deploy)
- *   GAS_RESERVE_TON=0.5           (TON sent after deploy for JettonTransfer outs)
+ *   GAS_RESERVE_TON=2             (Gram sent after deploy; each USDT transfer attaches 0.15)
  */
 import { config as loadEnv } from "dotenv";
 import { resolve, dirname } from "node:path";
@@ -121,7 +121,7 @@ async function main() {
     process.env.USDT_JETTON_MASTER?.trim() || DEFAULT_TESTNET_USDT,
   );
   const deployAmount = toNano(process.env.DEPLOY_TON_AMOUNT || "0.25");
-  const gasReserve = toNano(process.env.GAS_RESERVE_TON || "0.5");
+  const gasReserve = toNano(process.env.GAS_RESERVE_TON || "2");
 
   let endpoint =
     process.env.TON_API_URL?.replace(/\/$/, "") ||
@@ -164,7 +164,8 @@ async function main() {
     );
   }
 
-  const registry = await PassGramRegistry.fromInit(deployer, treasury, usdtMaster);
+  const ownerPublicKey = BigInt(`0x${keyPair.publicKey.toString("hex")}`);
+  const registry = await PassGramRegistry.fromInit(deployer, treasury, usdtMaster, ownerPublicKey);
   console.log("Registry:   ", registry.address.toString());
 
   const opened = client.open(registry);
@@ -227,7 +228,12 @@ async function main() {
   console.log("USDT wallet:", jettonWallet.toString());
 
   const bound = await withRetry("getUsdtWallet", () => opened.getUsdtJettonWallet());
-  if (!bound || !bound.equals(jettonWallet)) {
+  if (bound && !bound.equals(jettonWallet)) {
+    throw new Error(
+      `USDT jetton wallet is already set to ${bound.toString()} and cannot be changed. Expected ${jettonWallet.toString()}.`,
+    );
+  }
+  if (!bound) {
     console.log("Binding SetUsdtJettonWallet…");
     const msg: SetUsdtJettonWallet = {
       $$type: "SetUsdtJettonWallet",

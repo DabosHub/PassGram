@@ -5,6 +5,8 @@ export type AffiliateRecord = {
   code: string;
   telegramUserId: string;
   payoutAccount: string;
+  /** Optional record of a connected wallet. Settlement pays payoutAccount. */
+  signerAddress?: string | null;
   createdAt: string;
 };
 

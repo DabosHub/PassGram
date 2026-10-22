@@ -1,5 +1,6 @@
 import { getChannelRepository, ChannelConfigError } from "./channelRepository";
 import type { ChannelDeps } from "./channelFlow";
+import { getMembershipRepository } from "./membershipRepository";
 import { getReferralRepository } from "./referralRepository";
 import { createTelegramClient } from "./telegramClient";
 import { isTonAddress } from "../ton/config";
@@ -26,13 +27,19 @@ export async function buildChannelDeps(): Promise<ChannelDeps> {
     botToken,
     botUserId,
     now: () => Date.now(),
+    listCurrentSubscriberIds: async (communityId, nowMs) => {
+      const members = await getMembershipRepository();
+      return members.listCurrentSubscriberIds(communityId, nowMs);
+    },
     accountStatus: async (accountId) => (isTonAddress(accountId) ? "exists" : "missing"),
     getCreatorAttribution: async (telegramUserId) => {
       const attribution = await referralRepo.getAttribution(telegramUserId);
       if (!attribution) return null;
+      const affiliate = await referralRepo.getAffiliateByCode(attribution.referrerCode);
       return {
         referrerCode: attribution.referrerCode,
         referrerTelegramUserId: attribution.referrerTelegramUserId,
+        referrerPayout: affiliate?.payoutAccount || null,
       };
     },
   };

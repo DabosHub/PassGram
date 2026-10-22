@@ -1,4 +1,5 @@
 import pg from "pg";
+import { tonWalletKey } from "./walletKey.ts";
 
 export function createPool(databaseUrl: string): pg.Pool {
   return new pg.Pool({
@@ -79,6 +80,8 @@ export async function upsertPaymentAndSubscription(
       [event.communityId, event.subscriber, event.expiresAtMs, paymentId],
     );
 
+    await syncMembership(client, event, creatorAmt.toString(), treasury.toString(), referrerAmt.toString());
+
     await client.query("commit");
     return { paymentId, inviteNeeded: true };
   } catch (error) {
@@ -86,6 +89,57 @@ export async function upsertPaymentAndSubscription(
     throw error;
   } finally {
     client.release();
+  }
+}
+
+async function syncMembership(
+  client: pg.PoolClient,
+  event: SubscriptionPaidEvent,
+  creatorAmount: string,
+  platformFee: string,
+  affiliateAmount: string,
+): Promise<void> {
+  const telegramUserId = Number(event.telegramUserId);
+  if (!Number.isSafeInteger(telegramUserId) || telegramUserId <= 0) return;
+  await client.query("savepoint membership_sync");
+  try {
+    await client.query(
+      `insert into telegram_profiles (telegram_user_id) values ($1) on conflict (telegram_user_id) do nothing`,
+      [telegramUserId],
+    );
+    await client.query(
+      `insert into community_memberships (
+         community_id, subscriber_telegram_user_id, confirmation, started_at_ms, expires_at_ms,
+         payment_amount, renewal_pending, created_at_ms
+       ) values ($1, $2, 'confirmed', $3, $4, $5, false, $3)
+       on conflict (community_id, subscriber_telegram_user_id) do update set
+         confirmation = 'confirmed',
+         started_at_ms = excluded.started_at_ms,
+         expires_at_ms = excluded.expires_at_ms,
+         payment_amount = excluded.payment_amount,
+         renewal_pending = false`,
+      [event.communityId, telegramUserId, event.paidAtMs, event.expiresAtMs, event.amount],
+    );
+    await client.query(
+      `insert into community_membership_payments (
+         community_id, subscriber_telegram_user_id, gross_amount, creator_amount, platform_fee,
+         affiliate_amount, community_affiliate_amount, status, transaction_reference, paid_at_ms
+       ) values ($1, $2, $3, $4, $5, $6, '0', 'confirmed', $7, $8)
+       on conflict (transaction_reference) do nothing`,
+      [
+        event.communityId,
+        telegramUserId,
+        event.amount,
+        creatorAmount,
+        platformFee,
+        affiliateAmount,
+        event.txHash,
+        event.paidAtMs,
+      ],
+    );
+    await client.query("release savepoint membership_sync");
+  } catch {
+    await client.query("rollback to savepoint membership_sync");
   }
 }
 
@@ -116,12 +170,127 @@ export async function listExpiredSubscriptions(
   }));
 }
 
+export type RenewalReminder = {
+  communityId: number;
+  telegramUserId: string;
+  expiresAtMs: number;
+  title: string;
+};
+
+export async function listDueRenewalReminders(
+  pool: pg.Pool,
+  nowMs: number,
+  untilMs: number,
+): Promise<RenewalReminder[]> {
+  const result = await pool.query<{
+    community_id: string;
+    subscriber_telegram_user_id: string;
+    expires_at_ms: string;
+    title: string;
+  }>(
+    `select m.community_id, m.subscriber_telegram_user_id, m.expires_at_ms, c.title
+     from community_memberships m
+     join creator_communities c on c.community_id = m.community_id
+     where m.confirmation = 'confirmed'
+       and m.expires_at_ms > $1
+       and m.expires_at_ms <= $2
+       and m.renewal_reminded_for_expires_at_ms is distinct from m.expires_at_ms
+     order by m.expires_at_ms asc
+     limit 50`,
+    [nowMs, untilMs],
+  );
+  return result.rows.map((row) => ({
+    communityId: Number(row.community_id),
+    telegramUserId: String(row.subscriber_telegram_user_id),
+    expiresAtMs: Number(row.expires_at_ms),
+    title: row.title,
+  }));
+}
+
+export async function markRenewalReminded(
+  pool: pg.Pool,
+  communityId: number,
+  telegramUserId: string,
+  expiresAtMs: number,
+): Promise<void> {
+  await pool.query(
+    `update community_memberships
+     set renewal_reminded_for_expires_at_ms = $3
+     where community_id = $1
+       and subscriber_telegram_user_id = $2
+       and expires_at_ms = $3`,
+    [communityId, telegramUserId, expiresAtMs],
+  );
+}
+
+export async function telegramUserIdForTonWallet(pool: pg.Pool, address: string): Promise<string | null> {
+  const key = tonWalletKey(address);
+  const candidates = [key, address.trim()].filter((value, index, all): value is string => Boolean(value) && all.indexOf(value) === index);
+  if (!candidates.length) return null;
+  const result = await pool.query<{ telegram_user_id: string }>(
+    `select telegram_user_id from telegram_wallets where ton_address = any($1::text[]) limit 1`,
+    [candidates],
+  );
+  const id = result.rows[0]?.telegram_user_id;
+  return id == null ? null : String(id);
+}
+
 export async function communityChatId(pool: pg.Pool, communityId: number): Promise<string | null> {
   const result = await pool.query<{ telegram_chat_id: string | null }>(
     `select telegram_chat_id from creator_communities where community_id = $1 limit 1`,
     [communityId],
   );
   return result.rows[0]?.telegram_chat_id ?? null;
+}
+
+export async function storeMembershipInvite(pool: pg.Pool, txHash: string, inviteLink: string): Promise<void> {
+  await pool
+    .query(`update community_membership_payments set invite_link = $2 where transaction_reference = $1`, [txHash, inviteLink])
+    .catch(() => undefined);
+}
+
+export type CommunityReferralConversion = {
+  referrerTelegramUserId: string;
+  title: string;
+  actorName: string;
+  referralPercentBps: number;
+};
+
+/** The community-program referrer locked for this subscriber, if one was registered. */
+export async function communityReferralConversion(
+  pool: pg.Pool,
+  communityId: number,
+  subscriberTelegramUserId: string,
+): Promise<CommunityReferralConversion | null> {
+  const subscriberId = Number(subscriberTelegramUserId);
+  if (!Number.isSafeInteger(communityId) || communityId < 1) return null;
+  if (!Number.isSafeInteger(subscriberId) || subscriberId <= 0) return null;
+  const result = await pool.query<{
+    referrer_telegram_user_id: string;
+    bps: string;
+    title: string;
+    actor_name: string | null;
+  }>(
+    `select a.referrer_telegram_user_id,
+            case when a.referral_percent_bps > 0 then a.referral_percent_bps else c.referral_percent_bps end as bps,
+            c.title,
+            p.display_name as actor_name
+     from community_attributions a
+     join creator_communities c on c.community_id = a.community_id
+     left join telegram_profiles p on p.telegram_user_id = a.subscriber_telegram_user_id
+     where a.community_id = $1 and a.subscriber_telegram_user_id = $2
+     limit 1`,
+    [communityId, subscriberId],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  const bps = Number(row.bps);
+  return {
+    referrerTelegramUserId: String(row.referrer_telegram_user_id),
+    title: row.title,
+    actorName: row.actor_name?.trim() || "",
+    referralPercentBps: Number.isFinite(bps) && bps > 0 ? Math.trunc(bps) : 0,
+  };
 }
 
 export async function storeInviteLink(

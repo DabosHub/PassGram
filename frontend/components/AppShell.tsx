@@ -2,15 +2,19 @@
 
 import { useEffect, useState } from "react";
 import type { AppRoute } from "@/lib/route";
+import { useDemoLab } from "@/lib/demoLabContext";
+import { resolveSubscriberView } from "@/lib/subscriberAccess";
 import { useStore } from "@/lib/store";
+import { refreshSubscriberLedgerNow, useSubscriberLedger } from "@/lib/useSubscriberLedger";
 import { bootTelegram, bootTelegramSdk } from "@/lib/telegram";
 import { useAppRoute } from "@/lib/useRoute";
 import { AccountView } from "./AccountView";
-import { CommunityRoute, ManageRoute, SubscriptionRoute } from "./CommunityScreens";
+import { CommunityRoute, ManageRoute, SettingsRoute, SubscriptionRoute } from "./CommunityScreens";
 import { CreateView } from "./CreateView";
 import { DashboardView } from "./DashboardView";
 import { Logo } from "./Logo";
 import { ReferralView } from "./ReferralView";
+import { JoinCommunityModal, openCommunityInvite } from "./JoinCommunityModal";
 import { Avatar } from "./ui";
 
 const tabs = [
@@ -21,10 +25,50 @@ const tabs = [
 
 export function AppShell() {
   const store = useStore();
+  const lab = useDemoLab();
   const { route, ready, go } = useAppRoute();
   const [banner, setBanner] = useState<string | null>(null);
   const [walletBusy, setWalletBusy] = useState(false);
   const walletAccount = store.walletAccount;
+  const subscriberLedger = useSubscriberLedger(Boolean(lab.sceneId));
+  const [rejoinRequired, setRejoinRequired] = useState<number[]>([]);
+  const [joinAttemptCommunityId, setJoinAttemptCommunityId] = useState<number | null>(null);
+  const rejoin = subscriberLedger
+    ? resolveSubscriberView({
+        access: subscriberLedger.access,
+        requiredCommunityIds: rejoinRequired,
+        joinAttemptCommunityId,
+      })
+    : { hold: [], offer: null };
+
+  useEffect(() => {
+    if (!subscriberLedger) return;
+    const outside = subscriberLedger.access.filter((row) => row.inChannel === false).map((row) => row.communityId);
+    if (!outside.length) return;
+    setRejoinRequired((current) => {
+      const next = new Set(current);
+      for (const id of outside) next.add(id);
+      return next.size === current.length ? current : [...next];
+    });
+  }, [subscriberLedger]);
+
+  const holdKey = rejoin.hold.join(",");
+  const offerCommunityId = rejoin.offer?.communityId ?? null;
+
+  useEffect(() => {
+    if (!subscriberLedger) return;
+    const held = new Set(holdKey ? holdKey.split(",").map(Number) : []);
+    store.applySubscriberLedger({
+      subscriptions: subscriberLedger.subscriptions.filter((item) => !held.has(item.communityId)),
+      payments: subscriberLedger.payments.filter((item) => !held.has(item.communityId)),
+    });
+  }, [store, subscriberLedger, holdKey]);
+
+  useEffect(() => {
+    if (offerCommunityId == null || joinAttemptCommunityId !== offerCommunityId) return;
+    const timer = window.setInterval(() => refreshSubscriberLedgerNow(), 3000);
+    return () => window.clearInterval(timer);
+  }, [offerCommunityId, joinAttemptCommunityId]);
 
   useEffect(() => {
     const profile = bootTelegram();
@@ -35,9 +79,22 @@ export function AppShell() {
         username: profile.username ?? "",
         avatarUrl: profile.photoUrl ?? "",
       });
+      if (profile.id > 0) {
+        void fetch("/api/telegram/profile", {
+          method: "POST",
+          headers: { "x-telegram-init-data": window.Telegram?.WebApp?.initData || "" },
+        }).catch(() => undefined);
+      }
+    } else if (lab.enabled) {
+      store.setTelegramProfile({
+        telegramUserId: 900001,
+        displayName: "Demo Creator",
+        username: "democreator",
+        avatarUrl: "",
+      });
     }
     void bootTelegramSdk();
-  }, [store.ready]);
+  }, [store.ready, lab.enabled]);
 
   useEffect(() => {
     if (!store.ready || !route.referralCode) return;
@@ -134,12 +191,25 @@ export function AppShell() {
           </button>
         </div>
       </header>
-      <section className="flex-1 space-y-3 px-4 py-4 pb-28">
+      <section className="flex flex-1 flex-col space-y-3 px-4 py-4 pb-28">
         {banner || route.linkError === "invalid_referral" ? (
           <p className="rounded-lg border border-[var(--pg-line)] bg-[var(--pg-card)] px-3 py-2 text-[15px]">{banner || "This referral code is invalid."}</p>
         ) : null}
         {!ready || !store.ready ? <p className="text-sm text-[var(--pg-hint)]">Loading</p> : <Screen route={route} go={go} />}
       </section>
+      {rejoin.offer?.inviteLink ? (
+        <JoinCommunityModal
+          communityName={rejoin.offer.communityName}
+          inviteLink={rejoin.offer.inviteLink}
+          checking={joinAttemptCommunityId === rejoin.offer.communityId}
+          onJoin={() => {
+            const offer = rejoin.offer;
+            if (!offer?.inviteLink) return;
+            setJoinAttemptCommunityId(offer.communityId);
+            openCommunityInvite(offer.inviteLink);
+          }}
+        />
+      ) : null}
       {store.lastTx ? (
         <div className="fixed inset-x-0 bottom-24 z-20 mx-auto w-full max-w-[430px] px-4">
           <div className="rounded-xl border border-[var(--pg-line)] bg-[var(--pg-card)] p-6 shadow-[var(--pg-shadow-float)]">
@@ -207,7 +277,8 @@ function Screen({ route, go }: { route: AppRoute; go: (next: AppRoute, replace?:
   if (route.screen === "account") return <AccountView page={route.accountPage} go={go} />;
   if (route.screen === "community") return <CommunityRoute communityId={route.communityId} linkError={route.linkError} />;
   if (route.screen === "subscription") return <SubscriptionRoute communityId={route.communityId} />;
-  if (route.screen === "manage") return <ManageRoute communityId={route.communityId} />;
+  if (route.screen === "manage") return <ManageRoute communityId={route.communityId} go={go} />;
+  if (route.screen === "settings") return <SettingsRoute communityId={route.communityId} go={go} />;
   if (route.tab === "create") return <CreateView />;
   if (route.tab === "referral") return <ReferralView />;
   return <DashboardView go={go} />;

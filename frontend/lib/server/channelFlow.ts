@@ -15,6 +15,16 @@ import {
   type ChannelSnapshot,
   type ChannelUiState,
 } from "../channelPolicy";
+import {
+  communityReferralNoticeKind,
+  communityReferralNoticeText,
+  communityReferralNoticeUrl,
+  deliverCommunityReferralNotice,
+  deliverReferralConversionNotice,
+  referralConversionNoticeText,
+  type CommunityReferralNoticeKind,
+} from "../communityReferralNotice";
+import { formatCommunityReferralPercent, parseCommunityReferralBps } from "../money";
 import { normalizeTonAddress } from "../ton/config";
 import type { ChannelRepository } from "./channelRepository";
 import { validateInitData } from "./initData";
@@ -29,7 +39,9 @@ export type ChannelDeps = {
   accountStatus: (accountId: string) => Promise<"exists" | "missing" | "implicit" | "unknown">;
   getCreatorAttribution?: (
     telegramUserId: string,
-  ) => Promise<{ referrerCode: string; referrerTelegramUserId: string } | null>;
+  ) => Promise<{ referrerCode: string; referrerTelegramUserId: string; referrerPayout: string | null } | null>;
+  /** Current confirmed subscribers of one community, excluding expired access. */
+  listCurrentSubscriberIds?: (communityId: number, nowMs: number) => Promise<string[]>;
 };
 
 export type ChannelResult = {
@@ -42,6 +54,7 @@ export type ChannelResult = {
   alreadyExists?: boolean;
   allowed?: boolean;
   communityId?: number;
+  platformMarketer?: string | null;
 };
 
 export type PublicChannel = {
@@ -60,6 +73,7 @@ export type PublicChannel = {
   durationDays: number | null;
   ownerTelegramUserId: string;
   active: boolean;
+  paused: boolean;
   referralEnabled: boolean;
   referralPercentBps: number;
 };
@@ -74,6 +88,11 @@ export type PublicCommunityListing = {
   durationDays: number;
   ownerTelegramUserId: string;
   ownerLabel: string;
+  ownerDisplayName: string;
+  ownerUsername: string;
+  ownerAvatarUrl: string;
+  telegramMemberCount: number | null;
+  paused: boolean;
 };
 
 const MEMBER_COUNT_MAX_AGE_MS = 15 * 60 * 1000;
@@ -158,6 +177,7 @@ export async function ingestTelegramUpdate(deps: ChannelDeps, update: unknown): 
           referralEnabled: existing.referralEnabled,
           referralPercentBps: existing.referralPercentBps,
           communityId: existing.communityId,
+          paused: existing.paused,
           active: existing.active && outcome.state === "verified",
         });
         if (outcome.state === "verified") {
@@ -344,6 +364,19 @@ export async function createVerifiedCommunity(
   if (activated.result === "not_verified" || activated.result === "missing" || !activated.row) {
     return fail("verification_failed", "This channel is not verified, so no community was created.");
   }
+  if (activated.result === "created" && attribution?.referrerTelegramUserId && activated.row.communityId) {
+    await deliverReferralConversionNotice({
+      telegram: deps.telegram,
+      recipientId: attribution.referrerTelegramUserId,
+      actorId: String(identity.userId),
+      text: referralConversionNoticeText({
+        program: "passgram",
+        title: activated.row.title,
+        actorName: identity.displayName,
+      }),
+      url: communityReferralNoticeUrl(activated.row.communityId),
+    });
+  }
   return {
     ok: true,
     state: "verified",
@@ -351,6 +384,7 @@ export async function createVerifiedCommunity(
     alreadyExists: activated.result === "exists",
     channel: toPublic(activated.row),
     communityId: activated.row.communityId ?? undefined,
+    platformMarketer: attribution?.referrerPayout || null,
   };
 }
 
@@ -361,13 +395,14 @@ export async function getPublicCommunityListing(
   if (!Number.isSafeInteger(communityId) || communityId < 1) {
     return { ok: false, message: "This community link is invalid." };
   }
-  const row = await deps.repo.getChannelByCommunityId(communityId);
-  if (!row || !row.active || row.verificationStatus !== "verified" || !row.priceUsdt || row.durationDays == null) {
+  const stored = await deps.repo.getChannelByCommunityId(communityId);
+  if (!stored || !stored.active || stored.verificationStatus !== "verified" || !stored.priceUsdt || stored.durationDays == null) {
     return { ok: false, message: "This community is unavailable." };
   }
-  if (!row.botCanInviteUsers || !row.botCanRestrictMembers) {
+  if (!stored.botCanInviteUsers || !stored.botCanRestrictMembers) {
     return { ok: false, message: "This community is unavailable." };
   }
+  const row = memberCountIsStale(stored, deps.now()) ? await refreshMemberCount(deps, stored) : stored;
   return {
     ok: true,
     community: {
@@ -379,6 +414,11 @@ export async function getPublicCommunityListing(
       durationDays: row.durationDays,
       ownerTelegramUserId: row.ownerTelegramUserId,
       ownerLabel: `Creator ${row.ownerTelegramUserId}`,
+      ownerDisplayName: "",
+      ownerUsername: "",
+      ownerAvatarUrl: "",
+      telegramMemberCount: row.telegramMemberCount,
+      paused: row.paused,
     },
   };
 }
@@ -391,7 +431,11 @@ export async function listOwnerCommunities(deps: ChannelDeps, initData: string):
   const identity = validateInitData(initData, deps.botToken, deps.now() / 1000);
   if (!identity) return { ok: false, message: "Open PassGram from Telegram so your account can be confirmed.", communities: [] };
   const rows = await deps.repo.listChannelsByOwner(String(identity.userId));
-  return { ok: true, communities: rows.map(toPublic) };
+  const fresh = [];
+  for (const row of rows) {
+    fresh.push(memberCountIsStale(row, deps.now()) ? await refreshMemberCount(deps, row) : row);
+  }
+  return { ok: true, communities: fresh.map(toPublic) };
 }
 
 export async function loadCommunityPhotoById(
@@ -427,6 +471,7 @@ export async function recheckChannelAccess(deps: ChannelDeps, initData: string, 
         referrerTelegramUserId: existing.referrerTelegramUserId,
         referralEnabled: existing.referralEnabled,
         referralPercentBps: existing.referralPercentBps,
+        paused: existing.paused,
         active: existing.active && outcome.state === "verified",
       };
     } else {
@@ -547,6 +592,7 @@ async function verifyChat(
       referralEnabled: false,
       referralPercentBps: 0,
       active: false,
+      paused: false,
     },
   };
 }
@@ -579,6 +625,7 @@ function ownershipDraftSnapshot(
     referralEnabled: false,
     referralPercentBps: 0,
     active: false,
+    paused: false,
   };
 }
 
@@ -669,6 +716,7 @@ function toPublic(channel: ChannelSnapshot): PublicChannel {
     durationDays: channel.durationDays,
     ownerTelegramUserId: channel.ownerTelegramUserId,
     active: channel.active,
+    paused: channel.paused,
     referralEnabled: channel.referralEnabled,
     referralPercentBps: channel.referralPercentBps,
   };
@@ -703,35 +751,139 @@ export async function listReferralEnabledCommunities(
         priceUsdt: row.priceUsdt!,
         durationDays: row.durationDays!,
         referralPercentBps: row.referralPercentBps,
-        referralPercent: Math.round(row.referralPercentBps / 100),
+        referralPercent: row.referralPercentBps / 100,
       })),
   };
+}
+
+export async function updateCommunityOffer(
+  deps: ChannelDeps,
+  initData: string,
+  input: { communityId: number; price: string; durationDays: unknown; payoutAccount: string },
+): Promise<{ ok: boolean; message: string }> {
+  const identity = validateInitData(initData, deps.botToken, deps.now() / 1000);
+  if (!identity) return { ok: false, message: "Open PassGram from Telegram so your account can be confirmed." };
+  if (!Number.isSafeInteger(input.communityId) || input.communityId < 1) {
+    return { ok: false, message: "This community is invalid." };
+  }
+  const priceUsdt = parseCommunityPrice(input.price);
+  const durationDays = parseDurationDays(input.durationDays);
+  if (!priceUsdt || durationDays == null) {
+    return { ok: false, message: "Enter at least 1 USDT and a whole number of days from 1 to 366." };
+  }
+  const row = await deps.repo.getChannelByCommunityId(input.communityId);
+  if (!row || row.ownerTelegramUserId !== String(identity.userId) || !row.active) {
+    return { ok: false, message: "Only the community owner can update this subscription." };
+  }
+  if (row.paused) {
+    return { ok: false, message: "Activate the community before changing the subscription." };
+  }
+  const payoutAccount = normalizeTonAddress(input.payoutAccount);
+  if (!payoutAccount) {
+    return { ok: false, message: "Enter a TON address (EQ… / UQ… or 0:…)." };
+  }
+  await deps.repo.saveChannel({ ...row, priceUsdt, durationDays, payoutAccount });
+  return { ok: true, message: "Subscription price, duration, and payout address saved." };
 }
 
 export async function updateCommunityReferralSettings(
   deps: ChannelDeps,
   initData: string,
-  input: { communityId: number; enabled: boolean; percent: number },
+  input: { communityId: number; enabled: boolean; percent: string },
 ): Promise<{ ok: boolean; message: string; channel?: PublicChannel }> {
   const identity = validateInitData(initData, deps.botToken, deps.now() / 1000);
   if (!identity) return { ok: false, message: "Open PassGram from Telegram so your account can be confirmed." };
   if (!Number.isSafeInteger(input.communityId) || input.communityId < 1) {
     return { ok: false, message: "This community is invalid." };
   }
-  if (input.enabled && (input.percent < 1 || input.percent > 50 || !Number.isInteger(input.percent))) {
-    return { ok: false, message: "Enter a whole referral percent from 1 to 50." };
-  }
   const row = await deps.repo.getChannelByCommunityId(input.communityId);
   if (!row || row.ownerTelegramUserId !== String(identity.userId) || !row.active) {
     return { ok: false, message: "Only the community owner can change referral settings." };
   }
+  if (row.paused) {
+    return { ok: false, message: "Activate the community before changing the referral program." };
+  }
+  const bps = input.enabled ? parseCommunityReferralBps(input.percent) : row.referralPercentBps;
+  if (input.enabled && bps == null) {
+    return { ok: false, message: "Enter a percent from 0.01% to 50%, with up to 2 decimal places." };
+  }
   const updated: ChannelSnapshot = {
     ...row,
     referralEnabled: input.enabled,
-    referralPercentBps: input.enabled ? input.percent * 100 : 0,
+    // Stopping the program keeps the rate so referrals already locked still settle.
+    referralPercentBps: bps ?? row.referralPercentBps,
   };
   await deps.repo.saveChannel(updated);
-  return { ok: true, message: input.enabled ? "Community referrals enabled." : "Community referrals turned off.", channel: toPublic(updated) };
+  const noticeKind = communityReferralNoticeKind(row, updated);
+  if (noticeKind && row.communityId != null) {
+    const percentLabel = formatCommunityReferralPercent(
+      noticeKind === "stopped" ? row.referralPercentBps : updated.referralPercentBps,
+    );
+    await sendCommunityReferralNotice(deps, {
+      communityId: row.communityId,
+      ownerTelegramUserId: row.ownerTelegramUserId,
+      title: row.title,
+      kind: noticeKind,
+      percentLabel,
+    });
+  }
+  return {
+    ok: true,
+    message: input.enabled
+      ? "Community referral program is on."
+      : "Community referral program is stopped. Referrals already registered still earn on those subscribers.",
+    channel: toPublic(updated),
+  };
+}
+
+async function sendCommunityReferralNotice(
+  deps: ChannelDeps,
+  input: {
+    communityId: number;
+    ownerTelegramUserId: string;
+    title: string;
+    kind: CommunityReferralNoticeKind;
+    percentLabel: string;
+  },
+): Promise<void> {
+  if (!deps.listCurrentSubscriberIds) return;
+  try {
+    const subscriberIds = await deps.listCurrentSubscriberIds(input.communityId, deps.now());
+    await deliverCommunityReferralNotice({
+      telegram: deps.telegram,
+      subscriberIds,
+      ownerTelegramUserId: input.ownerTelegramUserId,
+      text: communityReferralNoticeText(input),
+      url: communityReferralNoticeUrl(input.communityId),
+    });
+  } catch {
+    /* The referral setting is already saved. A notice failure does not roll it back. */
+  }
+}
+
+export async function updateCommunityPaused(
+  deps: ChannelDeps,
+  initData: string,
+  input: { communityId: number; paused: boolean },
+): Promise<{ ok: boolean; message: string; channel?: PublicChannel }> {
+  const identity = validateInitData(initData, deps.botToken, deps.now() / 1000);
+  if (!identity) return { ok: false, message: "Open PassGram from Telegram so your account can be confirmed." };
+  if (!Number.isSafeInteger(input.communityId) || input.communityId < 1) {
+    return { ok: false, message: "This community is invalid." };
+  }
+  const row = await deps.repo.getChannelByCommunityId(input.communityId);
+  if (!row || row.ownerTelegramUserId !== String(identity.userId) || !row.active) {
+    return { ok: false, message: "Only the community owner can change this community." };
+  }
+  const updated: ChannelSnapshot = { ...row, paused: input.paused };
+  await deps.repo.saveChannel(updated);
+  return {
+    ok: true,
+    message: input.paused
+      ? "Community is deactivated. Pages stay open. Payments, renewals, and new referrals are closed."
+      : "Community is active again. Payments, renewals, and the referral program use the saved settings.",
+    channel: toPublic(updated),
+  };
 }
 
 function fail(state: ChannelUiState, message: string): ChannelResult {

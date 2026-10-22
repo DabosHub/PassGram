@@ -6,12 +6,15 @@ Telegram Mini App for paid communities. Subscribers pay creators in **USDT Jetto
 
 The subscriber pays the listed USDT price. PassGram does not add a markup.
 
-| Case | Creator | PassGram treasury | Affiliate |
-| --- | ---: | ---: | ---: |
-| No referrer | 97.5% | 2.5% | — |
-| With first-touch referrer | 97.5% | 2.0% | 0.5% |
+| Case | Creator | PassGram treasury | PassGram affiliate | Community marketer |
+| --- | ---: | ---: | ---: | ---: |
+| No referrer | 97.5% | 2.5% | — | — |
+| PassGram referrer | 97.5% | 2.0% | 0.5% | — |
+| Community referral at R% | 97.5% minus R% of that 97.5% | 2.5% or 2.0% | 0.5% when a PassGram referrer exists | R% of the creator share |
 
-Affiliate commission is 20% of the platform fee (0.5% of gross). Attribution locks on the first Start / invite touch.
+The PassGram affiliate earns 20% of the platform fee (0.5% of the subscription price). That referral locks the first time someone opens PassGram from the link.
+
+A community marketer earns the creator's configured percent of the creator share, after the 2.5% platform fee. The subscriber price does not change. The percent locks on that subscriber's first confirmed payment and is paid again on every renewal. That first payment carries a short-lived signature from the registry owner over the payout stored for the referral link. A payment that changes the address is returned and does not lock a marketer. The published testnet contract enforces this only after it is redeployed.
 
 ## Repository layout
 
@@ -40,8 +43,8 @@ Channel verify, referrals, webhooks, and community APIs remain under `frontend/a
 ```bash
 cd contract
 npm install
-npm test          # split math
-npm run build     # requires @tact-lang/compiler
+npm run build     # required before tests; writes contract/build
+npm test          # split math and sandbox payments
 ```
 
 See [contract/README.md](contract/README.md) for jetton masters and deploy notes.
@@ -56,7 +59,7 @@ npm start
 
 Indexes registry payments, creates invite links, and kicks expired members. See [bot-service/README.md](bot-service/README.md).
 
-Apply migrations under `backend/migrations/` (including `005_ton_payment_fields.sql`) against your Postgres / Supabase database.
+Apply every file in `backend/migrations/` in numeric order against your Postgres / Supabase database. The latest migration stores each community referral payout on that community's link.
 
 ## Environment
 

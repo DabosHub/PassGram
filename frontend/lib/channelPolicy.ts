@@ -68,9 +68,11 @@ export type ChannelSnapshot = {
   referrerTelegramUserId: string | null;
   /** Community promoter program (cut from creator share). */
   referralEnabled: boolean;
-  /** Basis points of gross paid to community promoter (0–5000). */
+  /** Basis points of the creator share paid to the community promoter (0–5000). */
   referralPercentBps: number;
   active: boolean;
+  /** Creator-signed deactivation. Pages stay available; payments and new referrals do not. */
+  paused: boolean;
 };
 
 export function botAdministratorRights(): Record<(typeof ADMINISTRATOR_RIGHTS)[number], boolean> {

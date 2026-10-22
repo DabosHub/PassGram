@@ -6,6 +6,8 @@ import { normalizeCode } from "./money";
 import { contractIsConfigured } from "./ton/config";
 import { normalizeTonAddress } from "./ton/config";
 import { sendSubscriptionPayment } from "./ton/payments";
+import { mergeSubscriberSnapshot, type SubscriberSnapshot } from "./subscriberLedger";
+import { getConnectedTonAddress } from "./ton/wallet";
 import { connectTonWallet, type WalletSendResult } from "./ton/wallet";
 import { confirmCommunityCreation, confirmPayment, type Gate } from "./services/confirmation";
 
@@ -40,6 +42,11 @@ export type CommunityRecord = {
   createdAt: number;
   referralEnabled: boolean;
   referralPercentBps: number;
+  /** Telegram channel member total, including people who did not pay through PassGram. */
+  telegramMemberCount?: number | null;
+  ownerDisplayName?: string;
+  ownerUsername?: string;
+  ownerAvatarUrl?: string;
 };
 
 export type SubscriptionRecord = {
@@ -54,6 +61,9 @@ export type SubscriptionRecord = {
   transactionReference: string | null;
   renewalPending: boolean;
   createdAt: number;
+  subscriberDisplayName?: string;
+  subscriberUsername?: string;
+  subscriberAvatarUrl?: string;
 };
 
 export type AffiliateRecord = AffiliateProfile & {
@@ -109,7 +119,11 @@ type Store = Ledger & {
   acceptReferral: (code: string) => Promise<string | null>;
   prepareCommunity: () => Promise<ActionOutcome>;
   preparePayment: (communityId: number) => Promise<ActionOutcome>;
-  prepareAffiliate: (input: { payoutAddress: string }) => Promise<ActionOutcome>;
+  prepareAffiliate: (input: { payoutAddress: string; signerAddress?: string | null }) => Promise<ActionOutcome>;
+  patchOwnedCommunity: (
+    communityId: number,
+    patch: Partial<Pick<CommunityRecord, "price" | "periodSeconds" | "payoutAddress" | "referralEnabled" | "referralPercentBps" | "status">>,
+  ) => boolean;
   rememberCommunity: (input: {
     communityId: number;
     title: string;
@@ -121,7 +135,19 @@ type Store = Ledger & {
     payoutAddress?: string;
     referralEnabled?: boolean;
     referralPercentBps?: number;
+    telegramMemberCount?: number | null;
+    ownerDisplayName?: string;
+    ownerUsername?: string;
+    ownerAvatarUrl?: string;
+    paused?: boolean;
   }) => void;
+  noteCommunityCreator: (communityId: number, creator: { displayName: string; username: string; avatarUrl: string }) => void;
+  noteTelegramMembers: (communityId: number, count: number) => void;
+  applySubscriberLedger: (ledger: SubscriberSnapshot) => void;
+  /** Dev lab only: replace local preview ledger for UI walkthroughs. */
+  replaceLedger: (ledger: Ledger) => void;
+  /** Dev lab only: show/hide the transaction overlay. */
+  setDemoLastTx: (tx: WalletSendResult | null) => void;
 };
 
 const StoreContext = createContext<Store | null>(null);
@@ -235,6 +261,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setNotice("Payout preference saved on this device. It is not registered on-chain and does not move funds.");
         return null;
       },
+      patchOwnedCommunity: (communityId, patch) => {
+        const owned = session.communities.some((item) => item.id === communityId && item.ownerUserId === session.user.id);
+        if (!owned) return false;
+        setSession((current) => ({
+          ...current,
+          communities: current.communities.map((item) => (item.id === communityId ? { ...item, ...patch } : item)),
+        }));
+        return true;
+      },
       rememberCommunity: (input) => {
         const ownerUserId = `tg:${input.ownerTelegramUserId}`;
         const row: CommunityRecord = {
@@ -256,12 +291,83 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           createdAt: Date.now(),
           referralEnabled: Boolean(input.referralEnabled),
           referralPercentBps: input.referralPercentBps ?? 0,
+          telegramMemberCount: input.telegramMemberCount ?? null,
+          ownerDisplayName: input.ownerDisplayName || "",
+          ownerUsername: input.ownerUsername || "",
+          ownerAvatarUrl: input.ownerAvatarUrl || "",
         };
         setSession((current) => {
+          const previous = current.communities.find((item) => item.id === row.id);
+          const next = {
+            ...row,
+            telegramChatId: previous?.telegramChatId || row.telegramChatId,
+            telegramMemberCount: input.telegramMemberCount !== undefined ? input.telegramMemberCount : previous?.telegramMemberCount ?? null,
+            ownerDisplayName: input.ownerDisplayName || previous?.ownerDisplayName || "",
+            ownerUsername: input.ownerUsername || previous?.ownerUsername || "",
+            ownerAvatarUrl: input.ownerAvatarUrl || previous?.ownerAvatarUrl || "",
+            status: input.paused === true ? "paused" : input.paused === false ? "active" : previous?.status || row.status,
+            createdAt: previous?.createdAt || row.createdAt,
+          };
           const without = current.communities.filter((item) => item.id !== row.id);
-          return { ...current, communities: [...without, row] };
+          return { ...current, communities: [...without, next] };
         });
       },
+      applySubscriberLedger: (ledger) => {
+        setSession((current) => {
+          const next = mergeSubscriberSnapshot(
+            { userId: current.user.id, subscriptions: current.subscriptions, payments: current.payments },
+            ledger,
+          );
+          if (!next) return current;
+          return { ...current, subscriptions: next.subscriptions, payments: next.payments };
+        });
+      },
+      noteCommunityCreator: (communityId, creator) => {
+        const displayName = creator.displayName.trim();
+        const username = creator.username.trim().replace(/^@/, "");
+        const avatarUrl = creator.avatarUrl.trim();
+        if (!displayName && !username && !avatarUrl) return;
+        setSession((current) => {
+          const existing = current.communities.find((item) => item.id === communityId);
+          if (!existing) return current;
+          if (
+            (existing.ownerDisplayName || "") === displayName &&
+            (existing.ownerUsername || "") === username &&
+            (existing.ownerAvatarUrl || "") === avatarUrl
+          ) {
+            return current;
+          }
+          return {
+            ...current,
+            communities: current.communities.map((item) =>
+              item.id === communityId
+                ? { ...item, ownerDisplayName: displayName, ownerUsername: username, ownerAvatarUrl: avatarUrl }
+                : item,
+            ),
+          };
+        });
+      },
+      noteTelegramMembers: (communityId, count) => {
+        if (!Number.isInteger(count) || count < 0) return;
+        setSession((current) => {
+          const existing = current.communities.find((item) => item.id === communityId);
+          if (!existing || existing.telegramMemberCount === count) return current;
+          return {
+            ...current,
+            communities: current.communities.map((item) => (item.id === communityId ? { ...item, telegramMemberCount: count } : item)),
+          };
+        });
+      },
+      replaceLedger: (ledger) => {
+        setSession({
+          user: { ...ledger.user },
+          communities: [...ledger.communities],
+          subscriptions: [...ledger.subscriptions],
+          affiliates: [...ledger.affiliates],
+          payments: [...ledger.payments],
+        });
+      },
+      setDemoLastTx: (tx) => setLastTx(tx),
       acceptReferral: async (code) => {
         try {
           const response = await fetch("/api/telegram/referrals/attribute", {
@@ -299,7 +405,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       },
       preparePayment: async (communityId) => {
         const community = session.communities.find((item) => item.id === communityId && item.confirmation === "confirmed");
-        const walletConnected = Boolean(walletAccount);
+        const walletConnected = Boolean(walletAccount || getConnectedTonAddress());
         const reasons = paymentBlockers({
           contractConfigured: contractIsConfigured(),
           communityConfirmed: Boolean(community),
@@ -307,10 +413,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           walletConnected,
         });
         if (!community || !walletConnected) return { ok: false, reasons, tx: null };
+        if (community.status === "paused") {
+          return { ok: false, reasons: ["This community is deactivated. Payments and renewals are closed."], tx: null };
+        }
+        const initData = typeof window !== "undefined" ? window.Telegram?.WebApp?.initData || "" : "";
+        const linkedAddress = getConnectedTonAddress();
+        if (initData && linkedAddress) {
+          try {
+            const linked = await fetch("/api/telegram/wallet", {
+              method: "POST",
+              headers: { "content-type": "application/json", "x-telegram-init-data": initData },
+              body: JSON.stringify({ address: linkedAddress }),
+            });
+            const body = (await linked.json()) as { ok?: boolean; message?: string };
+            if (!body.ok) {
+              return { ok: false, reasons: [body.message || "Wallet could not be linked to this Telegram account."], tx: null };
+            }
+          } catch {
+            return { ok: false, reasons: ["Wallet link could not reach the server."], tx: null };
+          }
+        }
+        const payerWallet = getConnectedTonAddress() || walletAccount;
+        if (!payerWallet) return { ok: false, reasons: ["Connect your TON wallet before paying."], tx: null };
         let communityReferrerAddress: string | null = null;
+        let communityReferralBps: number | null = null;
+        let referralAuthorization: string | null = null;
+        let referralAuthorizationValidUntil: number | null = null;
         try {
           const settlement = await fetch(
-            `/api/telegram/referrals/community/settlement?communityId=${community.id}`,
+            `/api/telegram/referrals/community/settlement?communityId=${community.id}&wallet=${encodeURIComponent(payerWallet)}`,
             {
               headers: {
                 "x-telegram-init-data":
@@ -318,16 +449,39 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               },
             },
           );
-          const settled = (await settlement.json()) as { communityReferrerPayout?: string | null };
+          const settled = (await settlement.json()) as {
+            ok?: boolean;
+            message?: string;
+            communityReferrerPayout?: string | null;
+            referralPercentBps?: number;
+            referralAuthorization?: string;
+            referralAuthorizationValidUntil?: number;
+          };
+          if (!settlement.ok || settled.ok === false || !settled.referralAuthorization || !settled.referralAuthorizationValidUntil) {
+            return {
+              ok: false,
+              reasons: [settled.message || "Referral settlement could not be confirmed. The payment was not sent."],
+              tx: null,
+            };
+          }
           communityReferrerAddress = settled.communityReferrerPayout ?? null;
+          communityReferralBps = settled.referralPercentBps ?? null;
+          referralAuthorization = settled.referralAuthorization;
+          referralAuthorizationValidUntil = settled.referralAuthorizationValidUntil;
         } catch {
-          communityReferrerAddress = null;
+          return {
+            ok: false,
+            reasons: ["Referral settlement could not be confirmed. The payment was not sent."],
+            tx: null,
+          };
         }
         const tx = await sendSubscriptionPayment({
           communityId: community.id,
           amount: community.price,
-          hasPlatformReferrer: Boolean(session.user.referralCode),
           communityReferrerAddress,
+          communityReferralBps,
+          referralAuthorization,
+          referralAuthorizationValidUntil,
         });
         setLastTx(tx);
         const gate = await confirmPayment();
@@ -352,6 +506,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             body: JSON.stringify({
               payoutAccount: payout,
               telegramUsername: session.user.username,
+              signerAddress: input.signerAddress || null,
             }),
           });
           const result = (await response.json()) as {
@@ -373,7 +528,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             const withoutSelf = current.affiliates.filter((item) => item.userId !== current.user.id);
             return {
               ...current,
-              user: { ...current.user, payoutAddress: payout },
+              user: { ...current.user, payoutAddress: result.affiliate.payoutAccount },
               affiliates: [...withoutSelf, affiliateRow],
             };
           });

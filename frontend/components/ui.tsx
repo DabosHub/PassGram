@@ -7,30 +7,70 @@ export const primaryButton =
   "inline-flex min-h-11 items-center justify-center rounded-full bg-[var(--pg-blue)] px-4 py-2 text-base font-normal text-white active:bg-[var(--pg-blue-press)] disabled:cursor-not-allowed disabled:opacity-50";
 export const secondaryButton =
   "inline-flex min-h-11 items-center justify-center rounded-full border border-[var(--pg-blue)] bg-[var(--pg-card)] px-4 py-2 text-base font-normal text-[var(--pg-blue)] disabled:cursor-not-allowed disabled:opacity-50";
+export const dangerButton =
+  "inline-flex min-h-11 items-center justify-center rounded-full bg-[var(--pg-ruby)] px-4 py-2 text-base font-normal text-white active:brightness-95 disabled:cursor-not-allowed disabled:opacity-50";
+
+/** Telegram-style letter avatar palette (matches official client hues). */
+const TELEGRAM_AVATAR_COLORS = [
+  "#e17076",
+  "#efa651",
+  "#a695e7",
+  "#7bc862",
+  "#6ec9cb",
+  "#65aadd",
+  "#ee7aae",
+] as const;
+
+function telegramAvatarColor(seed: string): string {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = Math.imul(31, hash) + seed.charCodeAt(i);
+  }
+  return TELEGRAM_AVATAR_COLORS[Math.abs(hash) % TELEGRAM_AVATAR_COLORS.length];
+}
+
+function telegramAvatarLetter(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return "?";
+  // Channels/users: first visible letter, matching Telegram's default fallback.
+  const match = trimmed.match(/[\p{L}\p{N}]/u);
+  return (match?.[0] || trimmed[0] || "?").toUpperCase();
+}
 
 export function Avatar({
   name,
   imageUrl,
+  seed,
   className = "h-11 w-11",
 }: {
   name: string;
   imageUrl?: string;
+  /** Stable id (e.g. telegram chat id) so letter color matches across screens. */
+  seed?: string;
   className?: string;
 }) {
   const [failed, setFailed] = useState(false);
-  const letter = (name.trim()[0] || "?").toUpperCase();
+  const letter = telegramAvatarLetter(name);
+  const color = telegramAvatarColor((seed || name).trim() || "?");
+  // shrink-0 + aspect-square: flex parents were squashing w-14 into an oval.
+  const shape = `${className} shrink-0 aspect-square overflow-hidden rounded-full`;
+
   if (imageUrl && !failed) {
     return (
       <img
         src={imageUrl}
         alt=""
-        className={`${className} rounded-full object-cover`}
+        className={`${shape} object-cover`}
         onError={() => setFailed(true)}
       />
     );
   }
   return (
-    <span className={`${className} inline-flex items-center justify-center rounded-full bg-[var(--pg-tag)] text-sm font-normal text-[var(--pg-blue-press)]`}>
+    <span
+      className={`${shape} inline-flex items-center justify-center text-sm font-medium leading-none text-white`}
+      style={{ backgroundColor: color }}
+      aria-hidden={true}
+    >
       {letter}
     </span>
   );
@@ -44,6 +84,7 @@ export function Field({
   hint,
   placeholder,
   inputMode,
+  suffix,
   multiline = false,
 }: {
   label: string;
@@ -53,23 +94,29 @@ export function Field({
   hint?: string;
   placeholder?: string;
   inputMode?: "text" | "decimal" | "numeric" | "url";
+  suffix?: string;
   multiline?: boolean;
 }) {
   const className =
-    "mt-1 w-full rounded-[6px] border border-[var(--pg-input-line)] bg-[var(--pg-card)] px-3 py-2 text-[15px] font-light text-[var(--pg-text)] outline-none focus:border-[var(--pg-blue)]";
+    "w-full rounded-[6px] border border-[var(--pg-input-line)] bg-[var(--pg-card)] px-3 py-2 text-[15px] font-light text-[var(--pg-text)] outline-none focus:border-[var(--pg-blue)]";
   return (
     <label className="block">
       <span className="text-[13px] font-normal text-[var(--pg-hint)]">{label}</span>
       {multiline ? (
-        <textarea className={className} value={value} placeholder={placeholder} rows={3} onChange={(event) => onChange(event.target.value)} />
+        <textarea className={`mt-1 ${className}`} value={value} placeholder={placeholder} rows={3} onChange={(event) => onChange(event.target.value)} />
       ) : (
-        <input
-          className={className}
-          value={value}
-          placeholder={placeholder}
-          inputMode={inputMode}
-          onChange={(event) => onChange(event.target.value)}
-        />
+        <span className="relative mt-1 block">
+          <input
+            className={`${className}${suffix ? " pr-9" : ""}`}
+            value={value}
+            placeholder={placeholder}
+            inputMode={inputMode}
+            onChange={(event) => onChange(event.target.value)}
+          />
+          {suffix ? (
+            <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[15px] text-[var(--pg-hint)]">{suffix}</span>
+          ) : null}
+        </span>
       )}
       {error ? <span className="mt-1 block text-[13px] text-[var(--pg-ruby)]">{error}</span> : null}
       {hint && !error ? <span className="mt-1 block text-xs text-[var(--pg-hint)]">{hint}</span> : null}
@@ -87,7 +134,7 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <section className="rounded-3xl border border-[var(--pg-line)] bg-[var(--pg-card)] px-8 py-8 text-center">
+    <section className="w-full rounded-3xl border border-[var(--pg-line)] bg-[var(--pg-card)] px-8 py-8 text-center">
       <h2 className="text-[22px]">{title}</h2>
       <p className="mx-auto mt-2 max-w-xs text-[15px] text-[var(--pg-hint)]">{description}</p>
       {action ? <div className="mt-5">{action}</div> : null}

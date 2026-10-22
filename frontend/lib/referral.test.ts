@@ -46,6 +46,9 @@ test("first-touch attribution locks on Start and ignores later invites", async (
   const marketer = await registerAffiliate(deps, sign(1), "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs", "mira");
   assert.equal(marketer.ok, true);
   assert.ok(marketer.affiliate?.code);
+  const repeat = await registerAffiliate(deps, sign(1), "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c", "mira");
+  assert.equal(repeat.result, "exists");
+  assert.equal(repeat.affiliate?.payoutAccount, marketer.affiliate?.payoutAccount);
 
   const fromStart = await attributeFromWebhook(deps, {
     message: { from: { id: 42 }, text: `/start ref_${marketer.affiliate?.code}` },

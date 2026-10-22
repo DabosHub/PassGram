@@ -5,7 +5,7 @@
 import { config as loadEnv } from "dotenv";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mnemonicToPrivateKey } from "@ton/crypto";
+import { mnemonicToPrivateKey, sign } from "@ton/crypto";
 import { Address, beginCell, toNano, SendMode } from "@ton/core";
 import {
   TonClient,
@@ -18,12 +18,10 @@ import {
   PassGramRegistry,
   storeRegisterCommunity,
   storeSetCommunityReferral,
-  storeRecordSubscription,
   storeSetUsdtJettonWallet,
   storeJettonTransferNotification,
   type RegisterCommunity,
   type SetCommunityReferral,
-  type RecordSubscription,
   type SetUsdtJettonWallet,
   type JettonTransferNotification,
 } from "../build/PassGramRegistry_PassGramRegistry.js";
@@ -242,6 +240,21 @@ async function main() {
   {
     const name = "RegisterCommunity";
     try {
+      const terms = beginCell()
+        .storeAddress(owner)
+        .storeCoins(PRICE)
+        .storeUint(DURATION, 32)
+        .storeBit(false)
+        .storeUint(0, 16)
+        .storeUint(0, 8)
+        .endCell();
+      const approved = beginCell()
+        .storeUint(0x41555448, 32)
+        .storeAddress(registryAddr)
+        .storeUint(COMMUNITY_ID, 64)
+        .storeAddress(owner)
+        .storeRef(terms)
+        .endCell();
       const msg: RegisterCommunity = {
         $$type: "RegisterCommunity",
         communityId: COMMUNITY_ID,
@@ -249,9 +262,10 @@ async function main() {
         payout: owner,
         price: PRICE,
         durationSeconds: BigInt(DURATION),
-        platformReferrer: treasury, // non-null so platform-affiliate path can be tested
+        platformMarketer: null,
         communityReferralBps: 0n,
         accessMode: 0n,
+        authorization: sign(approved.hash(), keyPair.secretKey),
       };
       let seqno = await withRetry("seqno", () => walletContract.getSeqno());
       await withRetry("register", () =>
@@ -313,44 +327,6 @@ async function main() {
     }
   }
 
-  // ── RecordSubscription (owner test path + emit) ──────────
-  {
-    const name = "RecordSubscription (owner settle + emit)";
-    try {
-      const msg: RecordSubscription = {
-        $$type: "RecordSubscription",
-        communityId: COMMUNITY_ID,
-        subscriber: owner,
-        amount: PRICE,
-        hasPlatformReferrer: true,
-        communityReferrer: communityReferrer,
-      };
-      let seqno = await withRetry("seqno", () => walletContract.getSeqno());
-      await withRetry("record", () =>
-        sendWalletTransfer(walletContract, wallet, {
-          secretKey: keyPair.secretKey,
-          seqno,
-          messages: [
-            internal({
-              to: registryAddr,
-              value: toNano("0.08"),
-              body: beginCell().store(storeRecordSubscription(msg)).endCell(),
-              bounce: true,
-            }),
-          ],
-        }),
-      );
-      await waitSeqno(walletContract, seqno);
-      // Confirm via tonapi out messages / recent txs containing SubscriptionPaid opcode
-      const ok = await confirmSubscriptionPaidEvent(registryAddr.toString());
-      ok
-        ? pass(name, "tx accepted; SubscriptionPaid event found")
-        : pass(name, "tx accepted (event not yet indexed — still OK)");
-    } catch (e) {
-      fail(name, String((e as Error).message || e));
-    }
-  }
-
   // ── SetUsdtJettonWallet idempotent rebind ────────────────
   {
     const name = "SetUsdtJettonWallet (rebind same)";
@@ -399,8 +375,7 @@ async function main() {
         .storeBit(false) // either left = inline
         .storeUint(0x53554253, 32) // SUBS
         .storeUint(COMMUNITY_ID, 64)
-        .storeBit(true) // hasPlatformReferrer
-        .storeBit(true) // hasCommunityReferrer
+        .storeBit(true) // community payout present
         .storeAddress(communityReferrer)
         .endCell()
         .beginParse();
@@ -451,36 +426,6 @@ async function main() {
   }
   console.log(`\n${passed} passed, ${failed} failed, ${results.length} total`);
   if (failed > 0) process.exit(1);
-}
-
-async function confirmSubscriptionPaidEvent(registryFriendly: string): Promise<boolean> {
-  try {
-    await sleep(4000);
-    const url = `https://testnet.tonapi.io/v2/blockchain/accounts/${registryFriendly}/transactions?limit=10`;
-    const res = await fetch(url);
-    if (!res.ok) return false;
-    const json = (await res.json()) as {
-      transactions?: Array<{
-        out_msgs?: Array<{ raw_body?: string }>;
-        in_msg?: { op_code?: number; raw_body?: string };
-      }>;
-    };
-    const OP = 1258072203;
-    for (const tx of json.transactions || []) {
-      for (const m of tx.out_msgs || []) {
-        if (!m.raw_body) continue;
-        // raw_body is hex; first 8 hex chars after optional may be opcode
-        const hex = m.raw_body.replace(/^0x/, "");
-        if (hex.length >= 8) {
-          const op = parseInt(hex.slice(0, 8), 16);
-          if (op === OP) return true;
-        }
-      }
-    }
-    return false;
-  } catch {
-    return false;
-  }
 }
 
 main().catch((err) => {

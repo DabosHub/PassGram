@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { formatReferralLink, rankAffiliates, type RankedAffiliate } from "@/lib/domain";
-import { formatUsdt } from "@/lib/money";
+import { useDemoLab } from "@/lib/demoLabContext";
+import { formatCommunityReferralLink, formatReferralLink, rankAffiliates, type RankedAffiliate } from "@/lib/domain";
+import { computeSplit, formatUsdt } from "@/lib/money";
 import { normalizeTonAddress } from "@/lib/ton/config";
 import { loadLeaderboard } from "@/lib/services/confirmation";
 import { useStore } from "@/lib/store";
@@ -21,8 +22,18 @@ type ReferralCommunityCard = {
   referralPercent: number;
 };
 
+function formatReferralRate(percent: number): string {
+  const text = percent.toFixed(2).replace(/\.?0+$/, "");
+  return `${text || "0"}%`;
+}
+
 export function ReferralView() {
+  const lab = useDemoLab();
   const [segment, setSegment] = useState<ReferralSegment>("leaderboard");
+
+  useEffect(() => {
+    if (lab.referralSegment) setSegment(lab.referralSegment);
+  }, [lab.referralSegment]);
 
   return (
     <div className="space-y-4">
@@ -63,6 +74,7 @@ export function ReferralView() {
 
 function PassGramReferralSegment() {
   const store = useStore();
+  const lab = useDemoLab();
   const affiliate = store.affiliates.find((item) => item.userId === store.user.id && item.confirmation === "confirmed");
   const [payout, setPayout] = useState(store.user.payoutAddress);
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +82,7 @@ function PassGramReferralSegment() {
   const [busy, setBusy] = useState(false);
 
   async function register() {
-    if (busy) return;
+    if (busy || affiliate) return;
     const account = normalizeTonAddress(payout);
     if (!account) {
       setError("Enter a TON address (EQ… / UQ… or 0:…).");
@@ -78,6 +90,25 @@ function PassGramReferralSegment() {
     }
     setError(null);
     setBusy(true);
+    if (lab.enabled) {
+      store.replaceLedger({
+        user: { ...store.user, payoutAddress: account },
+        communities: store.communities,
+        subscriptions: store.subscriptions,
+        payments: store.payments,
+        affiliates: [
+          {
+            userId: store.user.id,
+            code: store.user.username || "democreator",
+            payoutAddress: account,
+            confirmation: "confirmed",
+            createdAt: Date.now(),
+          },
+        ],
+      });
+      setBusy(false);
+      return;
+    }
     const outcome = await store.prepareAffiliate({ payoutAddress: account });
     setReasons(outcome.ok ? [] : outcome.reasons);
     setBusy(false);
@@ -104,11 +135,11 @@ function PassGramReferralSegment() {
             onChange={setPayout}
             placeholder="EQ…"
             error={error || undefined}
-            hint="Required. TON address where affiliate commissions are sent."
+            hint="Required. Commissions are sent to this address when a referred subscription is paid."
           />
           <ReasonList reasons={reasons} />
           <button className={`${primaryButton} w-full`} onClick={() => void register()} disabled={busy || !normalizeTonAddress(payout)}>
-            {busy ? "Checking" : "Create referral link"}
+            {busy ? "Creating" : "Create referral link"}
           </button>
         </section>
       )}
@@ -116,19 +147,52 @@ function PassGramReferralSegment() {
   );
 }
 
+function communityLinkCode(): string {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const bytes = new Uint8Array(10);
+  crypto.getRandomValues(bytes);
+  let code = "";
+  for (const byte of bytes) code += alphabet[byte % alphabet.length];
+  return code;
+}
+
 function CommunitiesReferralSegment() {
   const store = useStore();
-  const affiliate = store.affiliates.find((item) => item.userId === store.user.id && item.confirmation === "confirmed");
+  const lab = useDemoLab();
   const [communities, setCommunities] = useState<ReferralCommunityCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [busyId, setBusyId] = useState<number | null>(null);
   const [links, setLinks] = useState<Record<number, string>>({});
+  const [openIds, setOpenIds] = useState<Record<number, boolean>>({});
+  const [payouts, setPayouts] = useState<Record<number, string>>({});
+  const [savedPayouts, setSavedPayouts] = useState<Record<number, string>>({});
+  const [fieldErrors, setFieldErrors] = useState<Record<number, string>>({});
+  const [copiedId, setCopiedId] = useState<number | null>(null);
 
   useEffect(() => {
     let active = true;
     void (async () => {
       try {
+        if (lab.enabled) {
+          const demoCards: ReferralCommunityCard[] = store.communities
+            .filter((item) => item.confirmation === "confirmed" && item.status !== "paused" && item.referralEnabled)
+            .map((item) => ({
+              communityId: item.id,
+              title: item.name,
+              description: item.description || null,
+              hasPhoto: Boolean(item.imageUrl),
+              telegramMemberCount: 128,
+              priceUsdt: item.price,
+              durationDays: Math.max(1, Math.round(item.periodSeconds / 86_400)),
+              referralPercent: item.referralPercentBps / 100,
+            }));
+          if (active) {
+            setCommunities(demoCards);
+            setLoading(false);
+          }
+          return;
+        }
         const response = await fetch("/api/telegram/referrals/communities");
         const result = (await response.json()) as { ok?: boolean; communities?: ReferralCommunityCard[] };
         if (!active) return;
@@ -142,16 +206,31 @@ function CommunitiesReferralSegment() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [lab.enabled, store.communities]);
 
   async function createLink(communityId: number) {
     if (busyId != null) return;
-    if (!affiliate) {
-      setMessage("Register a PassGram referral payout address first (PassGram tab), then create community links.");
+    if (!openIds[communityId]) {
+      setOpenIds((current) => ({ ...current, [communityId]: true }));
       return;
     }
+    const account = normalizeTonAddress(payouts[communityId] ?? "");
+    if (!account) {
+      setFieldErrors((current) => ({ ...current, [communityId]: "Enter a TON address (EQ… / UQ… or 0:…)." }));
+      return;
+    }
+    setFieldErrors((current) => ({ ...current, [communityId]: "" }));
     setBusyId(communityId);
     setMessage("");
+    if (lab.enabled) {
+      setLinks((current) => ({
+        ...current,
+        [communityId]: formatCommunityReferralLink(communityId, communityLinkCode()),
+      }));
+      setSavedPayouts((current) => ({ ...current, [communityId]: account }));
+      setBusyId(null);
+      return;
+    }
     try {
       const response = await fetch("/api/telegram/referrals/community/link", {
         method: "POST",
@@ -159,13 +238,15 @@ function CommunitiesReferralSegment() {
           "content-type": "application/json",
           "x-telegram-init-data": typeof window !== "undefined" ? window.Telegram?.WebApp?.initData || "" : "",
         },
-        body: JSON.stringify({ communityId }),
+        body: JSON.stringify({ communityId, payoutAccount: account }),
       });
-      const result = (await response.json()) as { ok?: boolean; message?: string; link?: string };
+      const result = (await response.json()) as { ok?: boolean; message?: string; link?: string; payoutAccount?: string };
       if (!result.ok || !result.link) {
         setMessage(result.message || "Could not create this community referral link.");
       } else {
         setLinks((current) => ({ ...current, [communityId]: result.link! }));
+        setSavedPayouts((current) => ({ ...current, [communityId]: result.payoutAccount || account }));
+        setMessage(result.message?.includes("already active") ? result.message : "");
       }
     } catch {
       setMessage("Could not reach the server for community referral links.");
@@ -178,14 +259,10 @@ function CommunitiesReferralSegment() {
     <div className="space-y-4">
       <p className="text-sm text-[var(--pg-hint)]">
         Promote communities that enabled referrals. You earn the listed percent from the creator share when someone
-        subscribes via your link. Subscriber price stays the same.
+        subscribes via your link. You earn that same percent on every renewal, for as long as that subscriber keeps
+        renewing.
       </p>
-      {!affiliate ? (
-        <p className="rounded-2xl border border-[var(--pg-line)] bg-[var(--pg-card)] px-3 py-2 text-sm text-[var(--pg-hint)]">
-          Set your payout address under PassGram before creating community links.
-        </p>
-      ) : null}
-      {message ? <p className="text-sm text-[var(--pg-ruby)]">{message}</p> : null}
+      {message ? <p className={`text-sm ${message.includes("ready") || message.includes("already active") ? "text-[var(--pg-hint)]" : "text-[var(--pg-ruby)]"}`}>{message}</p> : null}
       {loading ? (
         <p className="text-sm text-[var(--pg-hint)]">Loading communities</p>
       ) : communities.length === 0 ? (
@@ -197,35 +274,96 @@ function CommunitiesReferralSegment() {
         communities.map((community) => {
           const photoUrl = community.hasPhoto ? `/api/telegram/communities/${community.communityId}/photo` : "";
           const link = links[community.communityId];
+          const creatorShare = computeSplit(BigInt(community.priceUsdt), false).creator;
           return (
             <article key={community.communityId} className="space-y-3 rounded-3xl border border-[var(--pg-line)] bg-[var(--pg-card)] p-4">
               <div className="flex items-start gap-3">
-                <Avatar name={community.title} imageUrl={photoUrl} />
+                <Avatar name={community.title} seed={String(community.communityId)} imageUrl={photoUrl || undefined} />
                 <div className="min-w-0 flex-1">
                   <h2 className="truncate text-lg font-semibold">{community.title}</h2>
                   <p className="text-sm text-[var(--pg-hint)]">
-                    {community.telegramMemberCount != null ? `${community.telegramMemberCount} members` : "Members unavailable"} ·{" "}
-                    {formatUsdt(community.priceUsdt)} USDT · {community.referralPercent}% referral
+                    {community.telegramMemberCount != null ? `${community.telegramMemberCount} members` : "Members unavailable"}
                   </p>
                 </div>
               </div>
-              {community.description ? <p className="text-sm text-[var(--pg-hint)]">{community.description}</p> : null}
+              {community.description ? <p className="text-sm leading-relaxed text-[var(--pg-hint)]">{community.description}</p> : null}
+              <div className="rounded-2xl bg-[var(--pg-bg)] px-3 py-3">
+                <dl className="grid grid-cols-2 gap-3">
+                  <div>
+                    <dt className="text-xs text-[var(--pg-hint)]">Creator share</dt>
+                    <dd className="mt-1 text-sm font-semibold">{formatUsdt(creatorShare)} USDT</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-[var(--pg-hint)]">Referral rate</dt>
+                    <dd className="mt-1 text-sm font-semibold">{formatReferralRate(community.referralPercent)}</dd>
+                  </div>
+                </dl>
+                <p className="mt-2 text-xs leading-relaxed text-[var(--pg-hint)]">The referral rate applies to the creator share.</p>
+              </div>
               {link ? (
-                <div className="space-y-2">
-                  <p className="break-all text-xs text-[var(--pg-hint)]">{link}</p>
-                  <button type="button" className={secondaryButton} onClick={() => void navigator.clipboard.writeText(link)}>
-                    Copy link
-                  </button>
+                <div className="space-y-3 border-t border-[var(--pg-line)] pt-3">
+                  <div>
+                    <p className="text-xs text-[var(--pg-hint)]">Referral link</p>
+                    <a
+                      className="mt-1 block break-all rounded-2xl bg-[var(--pg-bg)] px-3 py-2 text-xs leading-relaxed underline"
+                      href={link}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {link}
+                    </a>
+                  </div>
+                  {savedPayouts[community.communityId] ? (
+                    <div>
+                      <p className="text-xs text-[var(--pg-hint)]">Payout address</p>
+                      <p className="mt-1 break-all rounded-2xl bg-[var(--pg-bg)] px-3 py-2 text-xs leading-relaxed">
+                        {savedPayouts[community.communityId]}
+                      </p>
+                    </div>
+                  ) : null}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      className={primaryButton}
+                      onClick={() => {
+                        void navigator.clipboard.writeText(link).then(() => {
+                          setCopiedId(community.communityId);
+                          window.setTimeout(() => setCopiedId((current) => (current === community.communityId ? null : current)), 2000);
+                        });
+                      }}
+                    >
+                      {copiedId === community.communityId ? "Copied" : "Copy link"}
+                    </button>
+                    <button
+                      type="button"
+                      className={secondaryButton}
+                      onClick={() => void navigator.share?.({ url: link, title: community.title })}
+                    >
+                      Share
+                    </button>
+                  </div>
                 </div>
               ) : (
-                <button
-                  type="button"
-                  className={`${primaryButton} w-full`}
-                  disabled={busyId === community.communityId || !affiliate}
-                  onClick={() => void createLink(community.communityId)}
-                >
-                  {busyId === community.communityId ? "Creating" : "Create referral link"}
-                </button>
+                <div className="space-y-3">
+                  {openIds[community.communityId] ? (
+                    <Field
+                      label="Payout address"
+                      value={payouts[community.communityId] ?? ""}
+                      onChange={(value) => setPayouts((current) => ({ ...current, [community.communityId]: value }))}
+                      placeholder="EQ…"
+                      error={fieldErrors[community.communityId] || undefined}
+                      hint="The address must be on the TON network (EQ…, UQ…, or 0:…)."
+                    />
+                  ) : null}
+                  <button
+                    type="button"
+                    className={`${primaryButton} w-full`}
+                    disabled={busyId === community.communityId}
+                    onClick={() => void createLink(community.communityId)}
+                  >
+                    {busyId === community.communityId ? "Creating" : "Create referral link"}
+                  </button>
+                </div>
               )}
             </article>
           );
@@ -237,12 +375,38 @@ function CommunitiesReferralSegment() {
 
 function LeaderboardSegment() {
   const store = useStore();
+  const lab = useDemoLab();
   const [remote, setRemote] = useState<RankedAffiliate[]>([]);
   const [reason, setReason] = useState("Loading");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let active = true;
+    if (lab.enabled) {
+      setRemote([
+        {
+          id: "demo:1",
+          displayName: "Mira",
+          username: "mira",
+          avatarUrl: "",
+          referrals: 12,
+          conversions: 4,
+          confirmedCommission: "4200000",
+        },
+        {
+          id: store.user.id,
+          displayName: store.user.displayName || "You",
+          username: store.user.username || "democreator",
+          avatarUrl: store.user.avatarUrl,
+          referrals: 3,
+          conversions: 1,
+          confirmedCommission: "750000",
+        },
+      ]);
+      setReason("");
+      setLoading(false);
+      return;
+    }
     void loadLeaderboard().then((result) => {
       if (!active) return;
       setRemote(result.entries);
@@ -252,7 +416,7 @@ function LeaderboardSegment() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [lab.enabled, store.user.avatarUrl, store.user.displayName, store.user.id, store.user.username]);
 
   const localEntries = useMemo(() => {
     const confirmed = store.affiliates.filter((item) => item.confirmation === "confirmed");
@@ -326,7 +490,9 @@ function AffiliateDashboard({ code, payoutAddress }: { code: string; payoutAddre
   return (
     <section className="space-y-3 rounded-3xl border border-[var(--pg-line)] bg-[var(--pg-card)] p-4">
       <h2 className="font-semibold">Your PassGram referral link</h2>
-      <p className="break-all text-sm tracking-tight">{link}</p>
+      <a className="block break-all text-sm tracking-tight underline" href={link} target="_blank" rel="noreferrer">
+        {link}
+      </a>
       <p className="text-xs text-[var(--pg-hint)]">Code {code}</p>
       <p className="text-sm text-[var(--pg-hint)]">Payout account: {payoutAddress}</p>
       <div className="grid grid-cols-2 gap-2">

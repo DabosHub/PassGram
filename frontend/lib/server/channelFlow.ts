@@ -403,6 +403,9 @@ export async function getPublicCommunityListing(
     return { ok: false, message: "This community is unavailable." };
   }
   const row = memberCountIsStale(stored, deps.now()) ? await refreshMemberCount(deps, stored) : stored;
+  if (!row.priceUsdt || row.durationDays == null) {
+    return { ok: false, message: "This community is unavailable." };
+  }
   return {
     ok: true,
     community: {

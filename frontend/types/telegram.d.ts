@@ -40,4 +40,5 @@ interface TelegramWebApp {
   onEvent: (event: string, handler: () => void) => void;
   offEvent: (event: string, handler: () => void) => void;
   HapticFeedback?: { impactOccurred: (style: "light" | "medium" | "heavy") => void };
+  openLink?: (url: string) => void;
 }

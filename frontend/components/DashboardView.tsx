@@ -326,6 +326,7 @@ function CommunityCard({ communityId, go }: { communityId: number; go: (route: A
   const [copied, setCopied] = useState(false);
   const community = store.communities.find((item) => item.id === communityId);
   if (!community) return null;
+  const selectedId = community.id;
   const remote = ledger?.communities.find((item) => item.community.id === community.id) ?? null;
   const view = remote?.community ?? community;
   const subscriptionRows = remote ? remote.subscriptions : store.subscriptions;
@@ -348,7 +349,7 @@ function CommunityCard({ communityId, go }: { communityId: number; go: (route: A
       tab: "dashboard",
       screen: "manage",
       accountPage: "hub",
-      communityId: community.id,
+      communityId: selectedId,
       referralCode: null,
       communityReferralCode: null,
       linkError: null,
@@ -367,7 +368,7 @@ function CommunityCard({ communityId, go }: { communityId: number; go: (route: A
             tab: "dashboard",
             screen: "settings",
             accountPage: "hub",
-            communityId: community.id,
+            communityId: selectedId,
             referralCode: null,
             communityReferralCode: null,
             linkError: null,

@@ -514,13 +514,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             message?: string;
             affiliate?: { code: string; payoutAccount: string; telegramUserId: string };
           };
-          if (!result.ok || !result.affiliate) {
+          const affiliate = result.affiliate;
+          if (!result.ok || !affiliate) {
             return { ok: false, reasons: [result.message || "Referral registration failed."], tx: null };
           }
           const affiliateRow = {
             userId: session.user.id,
-            code: result.affiliate.code,
-            payoutAddress: result.affiliate.payoutAccount,
+            code: affiliate.code,
+            payoutAddress: affiliate.payoutAccount,
             confirmation: "confirmed" as const,
             createdAt: Date.now(),
           };
@@ -528,7 +529,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             const withoutSelf = current.affiliates.filter((item) => item.userId !== current.user.id);
             return {
               ...current,
-              user: { ...current.user, payoutAddress: result.affiliate.payoutAccount },
+              user: { ...current.user, payoutAddress: affiliate.payoutAccount },
               affiliates: [...withoutSelf, affiliateRow],
             };
           });

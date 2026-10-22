@@ -196,9 +196,9 @@ export function CreateView() {
   }
 
   function openExternal(url: string) {
-    const webApp = window.Telegram?.WebApp;
-    if (webApp && typeof (webApp as { openLink?: (href: string) => void }).openLink === "function") {
-      (webApp as { openLink: (href: string) => void }).openLink(url);
+    const openLink = window.Telegram?.WebApp?.openLink;
+    if (typeof openLink === "function") {
+      openLink(url);
       return;
     }
     window.open(url, "_blank", "noopener,noreferrer");

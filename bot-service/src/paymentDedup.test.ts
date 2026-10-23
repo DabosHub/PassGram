@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { upsertPaymentAndSubscription, type SubscriptionPaidEvent } from "./db.ts";
+import { UnknownCommunityError, upsertPaymentAndSubscription, type SubscriptionPaidEvent } from "./db.ts";
 
 const event: SubscriptionPaidEvent = {
   txHash: "tx-1",
@@ -19,6 +19,7 @@ function poolFor(inserted: boolean) {
   const client = {
     async query(sql: string) {
       queries.push(sql);
+      if (sql.includes("from creator_communities")) return { rows: [{ listed: 1 }], rowCount: 1 };
       if (sql.includes("on conflict (tx_hash)")) {
         return { rows: [{ payment_id: "9", inserted }], rowCount: 1 };
       }
@@ -46,6 +47,7 @@ test("a membership failure rolls the payment back so the indexer can retry it", 
   const client = {
     async query(sql: string) {
       queries.push(sql);
+      if (sql.includes("from creator_communities")) return { rows: [{ listed: 1 }], rowCount: 1 };
       if (sql.includes("on conflict (tx_hash)")) {
         return { rows: [{ payment_id: "9", inserted: true }], rowCount: 1 };
       }
@@ -62,6 +64,23 @@ test("a membership failure rolls the payment back so the indexer can retry it", 
   );
   assert.equal(queries.includes("commit"), false);
   assert.equal(queries.includes("rollback"), true);
+});
+
+test("a payment for an unlisted community is refused before a transaction starts", async () => {
+  const queries: string[] = [];
+  const client = {
+    async query(sql: string) {
+      queries.push(sql);
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  await assert.rejects(
+    () => upsertPaymentAndSubscription({ connect: async () => client } as never, event),
+    (error: unknown) => error instanceof UnknownCommunityError && error.communityId === 7 && error.txHash === "tx-1",
+  );
+  assert.equal(queries.includes("begin"), false);
+  assert.equal(queries.includes("rollback"), false);
 });
 
 test("the first insert of a chain transaction still records the subscription", async () => {

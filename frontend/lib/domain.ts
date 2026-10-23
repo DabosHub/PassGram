@@ -203,7 +203,6 @@ export type CommunityDraft = {
   imageUrl: string;
   priceUsdt: string;
   periodDays: string;
-  accessMode: "subscription" | "token_gate";
   payoutAddress: string;
   automationMode: "full" | "assisted";
 };
@@ -224,9 +223,6 @@ export function validateCommunityDraft(draft: CommunityDraft): Record<string, st
   const days = Number(draft.periodDays);
   if (!/^\d+$/.test(draft.periodDays.trim()) || days < 1 || days > 366) {
     errors.periodDays = "Duration must be between 1 and 366 days.";
-  }
-  if (draft.accessMode === "token_gate") {
-    errors.accessMode = "Token-Gating is not available. This contract only accepts paid USDT subscriptions.";
   }
   if (draft.automationMode === "full" && !chat) {
     errors.telegramChatId = "Full automation needs the Telegram chat id before the bot can be checked.";

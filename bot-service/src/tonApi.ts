@@ -217,7 +217,8 @@ export function parseSubscriptionHint(bodyBase64: string | undefined): {
     };
   }
 
-  // Debug JSON fixture used in local tests
+  // Local tests may pass a JSON fixture. A production message body is a cell, not this shortcut.
+  if (process.env.NODE_ENV === "production") return null;
   try {
     const text = Buffer.from(bodyBase64, "base64").toString("utf8");
     if (!text.startsWith("{")) return null;

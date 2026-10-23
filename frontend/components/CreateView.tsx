@@ -531,18 +531,6 @@ export function CreateView() {
         ) : null}
       </section>
 
-      <fieldset className="space-y-2">
-        <legend className="text-sm font-medium text-[var(--pg-text)]">Access model</legend>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="radio" name="accessMode" checked readOnly />
-          Subscription (USDT)
-        </label>
-        <label className="flex cursor-not-allowed items-center gap-2 text-sm text-[var(--pg-hint)] opacity-60">
-          <input type="radio" name="accessMode" disabled />
-          Token-Gated (coming soon)
-        </label>
-      </fieldset>
-
       <Field
         label="Subscription price (USDT)"
         value={price}

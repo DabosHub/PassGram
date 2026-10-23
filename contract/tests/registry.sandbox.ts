@@ -171,6 +171,13 @@ function jettonPayouts(tx: Transaction): { destination: Address; amount: bigint;
   return payouts;
 }
 
+/** The body mainnet jUSDT actually sends: wallet inline, then the owner address in a reference. */
+function masterWalletReply(wallet: Address, owner: Address | null) {
+  const body = beginCell().storeUint(0xd1735400, 32).storeUint(0, 64).storeAddress(wallet);
+  if (!owner) return body.storeBit(false).endCell();
+  return body.storeBit(true).storeRef(beginCell().storeAddress(owner).endCell()).endCell();
+}
+
 async function acceptUsdtWallet(world: World, wallet: Address) {
   const discovered = await world.registry.send(
     world.owner.getSender(),
@@ -178,16 +185,11 @@ async function acceptUsdtWallet(world: World, wallet: Address) {
     { $$type: "DiscoverUsdtJettonWallet", queryId: 0n },
   );
   assert.equal(exitCode(registryTransaction(discovered.transactions, world.registry.address)), 0);
-  const accepted = await world.registry.send(
-    world.usdtMaster.getSender(),
-    { value: toNano("0.05") },
-    {
-      $$type: "TakeWalletAddress",
-      queryId: 0n,
-      walletAddress: wallet,
-      ownerAddress: world.registry.address,
-    },
-  );
+  const accepted = await world.usdtMaster.send({
+    to: world.registry.address,
+    value: toNano("0.05"),
+    body: masterWalletReply(wallet, world.registry.address),
+  });
   const acceptedTx = registryTransaction(accepted.transactions, world.registry.address);
   assert.equal(exitCode(acceptedTx), 0);
   assert.ok(externalOps(acceptedTx).includes(0x57534554));
@@ -378,29 +380,19 @@ test("only the USDT master can bind this contract's jetton wallet", async () => 
   const world = await boot({ bindUsdt: false });
   assert.equal(await world.registry.getUsdtJettonWallet(), null);
 
-  const forged = await world.registry.send(
-    world.other.getSender(),
-    { value: toNano("0.05") },
-    {
-      $$type: "TakeWalletAddress",
-      queryId: 0n,
-      walletAddress: world.other.address,
-      ownerAddress: world.registry.address,
-    },
-  );
+  const forged = await world.other.send({
+    to: world.registry.address,
+    value: toNano("0.05"),
+    body: masterWalletReply(world.other.address, world.registry.address),
+  });
   assert.notEqual(exitCode(registryTransaction(forged.transactions, world.registry.address)), 0);
   assert.equal(await world.registry.getUsdtJettonWallet(), null);
 
-  const otherOwner = await world.registry.send(
-    world.usdtMaster.getSender(),
-    { value: toNano("0.05") },
-    {
-      $$type: "TakeWalletAddress",
-      queryId: 0n,
-      walletAddress: world.other.address,
-      ownerAddress: world.other.address,
-    },
-  );
+  const otherOwner = await world.usdtMaster.send({
+    to: world.registry.address,
+    value: toNano("0.05"),
+    body: masterWalletReply(world.other.address, world.other.address),
+  });
   assert.notEqual(exitCode(registryTransaction(otherOwner.transactions, world.registry.address)), 0);
   assert.equal(await world.registry.getUsdtJettonWallet(), null);
 

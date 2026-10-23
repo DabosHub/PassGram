@@ -23,13 +23,32 @@ export type SubscriptionPaidEvent = {
   telegramUserId?: string | null;
 };
 
+/** A confirmed payment arrived before its community row. The indexer skips it and keeps moving. */
+export class UnknownCommunityError extends Error {
+  readonly communityId: number;
+  readonly txHash: string;
+
+  constructor(communityId: number, txHash: string) {
+    super("Payment names a community that is not listed.");
+    this.name = "UnknownCommunityError";
+    this.communityId = communityId;
+    this.txHash = txHash;
+  }
+}
+
 export async function upsertPaymentAndSubscription(
   pool: pg.Pool,
   event: SubscriptionPaidEvent,
 ): Promise<{ paymentId: number; inviteNeeded: boolean }> {
   const client = await pool.connect();
+  let started = false;
   try {
+    const listed = await client.query(`select 1 from creator_communities where community_id = $1 limit 1`, [
+      event.communityId,
+    ]);
+    if (listed.rows.length < 1) throw new UnknownCommunityError(event.communityId, event.txHash);
     await client.query("begin");
+    started = true;
     if (!event.txHash.trim()) throw new Error("Payment is missing a transaction hash.");
     const platformBps = 250n;
     const platformReferral = event.hasPlatformReferrer === true;
@@ -91,7 +110,7 @@ export async function upsertPaymentAndSubscription(
     await client.query("commit");
     return { paymentId, inviteNeeded: true };
   } catch (error) {
-    await client.query("rollback");
+    if (started) await client.query("rollback");
     throw error;
   } finally {
     client.release();

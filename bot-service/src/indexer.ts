@@ -1,6 +1,6 @@
 import { isInsideChannel } from "./channelMember.ts";
 import { loadConfig } from "./config.ts";
-import { applyCommunityTerms, communityChatId, communityReferralConversion, createPool, platformReferrerPayout, readIndexerState, saveIndexerCursor, saveIndexerScan, storeInviteLink, storeMembershipInvite, telegramUserIdForTonWallet, upsertPaymentAndSubscription } from "./db.ts";
+import { applyCommunityTerms, communityChatId, communityReferralConversion, createPool, platformReferrerPayout, readIndexerState, saveIndexerCursor, saveIndexerScan, storeInviteLink, storeMembershipInvite, telegramUserIdForTonWallet, UnknownCommunityError, upsertPaymentAndSubscription } from "./db.ts";
 import { createShutdown, sleep } from "./lifecycle.ts";
 import { sanitizeError } from "./log.ts";
 import { notifyCommunityReferralPaid } from "./referralNotice.ts";
@@ -82,7 +82,22 @@ export async function runIndexerOnce(sharedPool?: Pool): Promise<number> {
         referrer,
         hasPlatformReferrer: hint.hasPlatformReferrer,
       };
-      const { paymentId, inviteNeeded } = await upsertPaymentAndSubscription(pool, { ...event, telegramUserId });
+      let paymentId: number;
+      let inviteNeeded: boolean;
+      try {
+        const saved = await upsertPaymentAndSubscription(pool, { ...event, telegramUserId });
+        paymentId = saved.paymentId;
+        inviteNeeded = saved.inviteNeeded;
+      } catch (error) {
+        if (!(error instanceof UnknownCommunityError)) throw error;
+        console.warn("skipped payment for an unlisted community", {
+          communityId: hint.communityId,
+          txHash: event.txHash,
+          amount: hint.amount,
+        });
+        seen.add(eventKey);
+        continue;
+      }
       seen.add(eventKey);
       handled += 1;
       if (inviteNeeded && telegramUserId) {

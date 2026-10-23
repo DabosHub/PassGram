@@ -1,6 +1,12 @@
 # PassGram
 
+[![CI](https://github.com/DabosHub/PassGram/actions/workflows/ci.yml/badge.svg)](https://github.com/DabosHub/PassGram/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Status](https://img.shields.io/badge/status-alpha-orange)
+
 Telegram Mini App for paid communities. Subscribers pay creators in **USDT Jetton on TON**. The PassGram registry splits each payment on-chain; `bot-service` indexes confirmations and manages Telegram access.
+
+> **Alpha software.** The smart contract has not been audited by an independent third party. Do not deploy on mainnet without commissioning an independent audit. Known findings and their status are documented in [SECURITY.md](SECURITY.md).
 
 ## Fee split
 
@@ -19,7 +25,7 @@ A community marketer earns the creator's configured percent of the creator share
 ## Repository layout
 
 ```text
-contract/      Tact PassGramRegistry + PassNft stub
+contract/      Tact PassGramRegistry
 frontend/      Telegram Mini App (Next.js) + channel/referral APIs
 bot-service/   TON indexer + subscription expiration cron
 backend/       SQL schema + migrations only
@@ -87,10 +93,9 @@ Required public TON keys:
 
 ## Out of scope (v1)
 
-- Full Token-Gating / NFT hold verification
 - Moving Mini App Telegram APIs into bot-service
 - Native TON (non-Jetton) as the primary checkout path
-- Mainnet contract deploy / live secret rotation
+- A maintainer deploying or rotating the live registry from inside a pull request
 
 ## Community
 

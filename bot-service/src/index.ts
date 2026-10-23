@@ -7,6 +7,7 @@ import { loadConfig } from "./config.ts";
 import { runExpirationCronOnce } from "./cron.ts";
 import { createPool } from "./db.ts";
 import { runIndexerOnce } from "./indexer.ts";
+import { healthReport, noteIndexerTick } from "./health.ts";
 import { createShutdown, sleep } from "./lifecycle.ts";
 import { sanitizeError } from "./log.ts";
 
@@ -15,8 +16,9 @@ function startHealthServer(signal: AbortSignal): void {
   if (!Number.isInteger(port) || port < 1 || port > 65535) return;
   const server = createServer((request, response) => {
     if (request.url === "/health") {
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ ok: true }));
+      const report = healthReport();
+      response.writeHead(report.status, { "content-type": "application/json" });
+      response.end(JSON.stringify(report.body));
       return;
     }
     response.writeHead(404);
@@ -40,7 +42,9 @@ async function main() {
     while (!shutdown.signal.aborted) {
       try {
         await runIndexerOnce(pool);
+        noteIndexerTick(true);
       } catch (error) {
+        noteIndexerTick(false);
         console.error("indexer", sanitizeError(error));
       }
       await sleep(config.pollIntervalMs, shutdown.signal);

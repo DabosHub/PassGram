@@ -5,6 +5,15 @@ import { DEMO_SCENES, type DemoSceneId } from "@/lib/demoLab";
 import { useDemoLab } from "@/lib/demoLabContext";
 import { useAppRoute } from "@/lib/useRoute";
 
+const ADMIN_PREVIEWS = [
+  { href: "/admin/preview", label: "Overview" },
+  { href: "/admin/preview?section=communities", label: "Communities" },
+  { href: "/admin/preview?section=communities&community=9001", label: "Community detail" },
+  { href: "/admin/preview?section=payments", label: "Payments" },
+  { href: "/admin/preview?section=referrals", label: "Referrals" },
+  { href: "/admin/preview?section=operations", label: "Operations" },
+];
+
 export function DemoLab() {
   const lab = useDemoLab();
   const { go } = useAppRoute();
@@ -51,6 +60,14 @@ export function DemoLab() {
         >
           Play create flow →
         </button>
+        <div className="space-y-1">
+          <p className="pt-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--pg-hint)]">Admin</p>
+          {ADMIN_PREVIEWS.map((item) => (
+            <a key={item.href} href={item.href} className="block w-full rounded-lg px-2 py-1.5 text-left text-xs text-[var(--pg-text)] hover:bg-[var(--pg-bg)]">
+              {item.label}
+            </a>
+          ))}
+        </div>
         {groups.map(([group, scenes]) => (
           <div key={group} className="space-y-1">
             <p className="pt-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--pg-hint)]">{group}</p>

@@ -2,7 +2,7 @@ import { Address, Cell } from "@ton/core";
 import { isTonAddress, tonConfig } from "../ton/config";
 
 /** Code hash of contract/build PassGramRegistry. Must match contract/registry.codehash. */
-export const PASSGRAM_REGISTRY_CODE_HASH = "afc38a5ea84e3696c2d9dc4e9dfa8020242528cd6415926c454bcf5994d0b2fb";
+export const PASSGRAM_REGISTRY_CODE_HASH = "059a7913ff627056f33068b260516ab67e50527c377fa9cbda044452ceb32bfb";
 
 export const REGISTRY_CODE_MISMATCH =
   "This registry is not the current PassGram contract. Registration and payments stay closed until this source is deployed.";

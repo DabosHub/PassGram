@@ -13,7 +13,6 @@ Tact contracts for USDT Jetton subscription payments with **on-chain** fee and c
   - Community promoter: **R% of the creator share** after the 2.5% platform fee (creator sets `communityReferralBps`, max 50%)
   - Emits `SubscriptionPaid` for the subscription price. USDT above the price is returned to the payer and emits `ExcessReturned`. An invalid payment emits `PaymentRefunded` and returns the full amount
   - The owner calls `DiscoverUsdtJettonWallet` once after deploy. The USDT master replies with this contract's jetton wallet, and that reply is the only way the address is stored. A pasted address is rejected, and a second discovery is rejected
-- **PassNft** — v2 placeholder for token-gating / SBT. Not wired to payments. `RegisterCommunity` rejects `accessMode` other than 0.
 
 ## Fee constants
 

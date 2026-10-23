@@ -102,11 +102,12 @@ message(0x2c76b973) ProvideWalletAddress {
     includeAddress: Bool;
 }
 
-/// Jetton master reply. The wallet is stored only when this master sends it for this contract.
+/// Jetton master reply. jUSDT puts the owner address in a reference after one bit.
+/// The wallet is stored only when this master sends it for this contract.
 message(0xd1735400) TakeWalletAddress {
     queryId: Int as uint64;
     walletAddress: Address;
-    ownerAddress: Address?;
+    ownerAddress: Cell?;
 }
 
 /// opcode "WSET". The USDT jetton wallet for this contract is now fixed.
@@ -295,7 +296,9 @@ contract PassGramRegistry with Deployable {
         // The master is the source of the address. A pasted wallet, or a reply about another owner, is rejected.
         require(sender() == self.usdtJettonMaster, "Not USDT master");
         require(self.usdtJettonWallet == null, "USDT wallet already set");
-        require(msg.ownerAddress != null && msg.ownerAddress!! == myAddress(), "Not this contract");
+        require(msg.ownerAddress != null, "Not this contract");
+        let owner: Address = msg.ownerAddress!!.beginParse().loadAddress();
+        require(owner == myAddress(), "Not this contract");
         self.usdtJettonWallet = msg.walletAddress;
         emit(UsdtJettonWalletSet{ wallet: msg.walletAddress }.toCell());
     }

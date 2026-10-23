@@ -142,11 +142,10 @@ test("community form and blockers", () => {
     imageUrl: "http://example.com/a.png",
     priceUsdt: "0.5",
     periodDays: "0",
-    accessMode: "token_gate",
     payoutAddress: "not valid",
     automationMode: "assisted",
   });
-  assert.ok(errors.name && errors.accessMode && errors.priceUsdt);
+  assert.ok(errors.name && errors.priceUsdt);
   const blockers = creationBlockers({
     contractConfigured: false,
     creatorConfirmed: false,

@@ -51,11 +51,20 @@ export function initDataFrom(request: Request): string {
   return request.headers.get("x-telegram-init-data") || "";
 }
 
+function failureDetail(error: unknown): string {
+  if (!(error instanceof Error)) return "unknown";
+  const code = "code" in error && typeof error.code === "string" ? error.code : "";
+  const message = error.message
+    .replace(/postgres(?:ql)?:\/\/\S+/gi, "[redacted]")
+    .replace(/bot\d+:[A-Za-z0-9_-]+/g, "bot[redacted]");
+  return [error.name, code, message].filter(Boolean).join(" ").slice(0, 240);
+}
+
 export function channelFailure(error: unknown): Response {
   if (error instanceof ChannelConfigError) {
     return Response.json({ ok: false, state: "verification_failed", message: error.message }, { status: 503 });
   }
-  console.error("channel request failed");
+  console.error("channel request failed", failureDetail(error));
   return Response.json(
     { ok: false, state: "verification_failed", message: "The channel request could not be completed." },
     { status: 500 },

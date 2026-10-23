@@ -44,7 +44,7 @@ The Mini App signs a community registration or a payment only when the configure
 - A payment whose community is not in `creator_communities` is logged with its transaction hash and skipped. The indexer cursor still advances, so one early payment cannot stop later payments. That skipped payment is not replayed when the community row appears later.
 - `payments.referrer_account_id` is the subscriber's saved PassGram referrer when the event says a platform referrer was paid. It is not the `platformMarketer` stored on the community at registration. Those wallets can differ, so affiliate analytics can disagree with the address the contract paid.
 - API rate limits are counted in memory on each server instance. Several instances do not share one counter.
-- Gasless wallet proofs are accepted for `passgram.app` as well as the hosts in `PASSGRAM_PUBLIC_URL` and `PASSGRAM_APP_DOMAINS`. `passgram.app` stays accepted if the public URL later changes.
+- Gasless wallet proofs are accepted for `passgram.app` and `passgram.io`, as well as the hosts in `PASSGRAM_PUBLIC_URL` and `PASSGRAM_APP_DOMAINS`. Those two hosts stay accepted if the public URL later changes.
 - `GET /health` on bot-service returns 200 while the process is starting and after an indexer pass finishes, including a pass that finds nothing. It returns 503 when the latest indexer pass threw.
 
 ## Vulnerability disclosure

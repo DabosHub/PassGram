@@ -1,12 +1,22 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { sanitizeError } from "./log.ts";
 import { tonWalletKey } from "./walletKey.ts";
 
+const supabaseRootCa = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../certs/prod-ca-2021.crt"), "utf8");
+
 export function createPool(databaseUrl: string): pg.Pool {
   const remote = /supabase|pooler\.|sslmode=require/i.test(databaseUrl);
+  const ssl = !remote
+    ? undefined
+    : process.env.PASSGRAM_DATABASE_SSL_NO_VERIFY === "1"
+      ? { rejectUnauthorized: false }
+      : { rejectUnauthorized: true, ca: supabaseRootCa };
   return new pg.Pool({
     connectionString: databaseUrl,
-    ssl: remote ? { rejectUnauthorized: process.env.PASSGRAM_DATABASE_SSL_NO_VERIFY !== "1" } : undefined,
+    ssl,
   });
 }
 

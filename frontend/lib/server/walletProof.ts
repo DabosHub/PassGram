@@ -20,7 +20,7 @@ export type WalletProofCheck =
 
 /** Hosts whose gasless wallet proofs PassGram accepts. */
 export function payoutProofDomains(env: NodeJS.ProcessEnv = process.env): string[] {
-  const hosts = new Set<string>(["passgram.app"]);
+  const hosts = new Set<string>(["passgram.app", "passgram.io"]);
   if (env.NODE_ENV !== "production") {
     hosts.add("localhost");
     hosts.add("127.0.0.1");

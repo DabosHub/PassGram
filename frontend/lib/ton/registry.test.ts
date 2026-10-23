@@ -112,13 +112,12 @@ test("SetCommunityPaused body is a creator-signed pause or resume", () => {
   assert.equal(resumed.loadBit(), false);
 });
 
-test("UpdateCommunity body carries the new subscription price, duration, and creator payout", () => {
+test("UpdateCommunity body carries the new subscription price and duration", () => {
   const body = Cell.fromBase64(
     buildUpdateCommunityBody({
       communityId: 42,
       price: "1500000",
       durationSeconds: 7 * 86_400,
-      payout: PAYOUT,
     }),
   ).beginParse();
   assert.equal(body.loadUint(32), 0x55504443);
@@ -126,6 +125,5 @@ test("UpdateCommunity body carries the new subscription price, duration, and cre
   assert.equal(body.loadUint(64), 42);
   assert.equal(body.loadCoins(), 1_500_000n);
   assert.equal(body.loadUint(32), 7 * 86_400);
-  assert.equal(body.loadAddress().equals(Address.parse(PAYOUT)), true);
   assert.equal(body.remainingBits, 0);
 });

@@ -1,4 +1,5 @@
 import type { CommunityReferralConversion } from "./db.ts";
+import { miniAppCommunityUrl } from "./miniAppName.ts";
 
 function clean(value: string, fallback: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, 80) || fallback;
@@ -20,9 +21,7 @@ export function communityReferralPaidNotice(input: { title: string; actorName: s
 }
 
 export function communityOpenUrl(communityId: number, env: NodeJS.ProcessEnv = process.env): string {
-  const bot = (env.TELEGRAM_BOT_USERNAME || env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || "PassGramBot").trim().replace(/^@/, "");
-  const app = (env.TELEGRAM_MINI_APP_SHORT_NAME || env.NEXT_PUBLIC_TELEGRAM_MINI_APP_SHORT_NAME || "passgram").trim().replace(/^@/, "") || "passgram";
-  return `https://t.me/${bot}/${app}?startapp=c_${communityId}`;
+  return miniAppCommunityUrl(communityId, env);
 }
 
 /** Messages the referrer after a newly confirmed payment. Skips a missing or self referral. */

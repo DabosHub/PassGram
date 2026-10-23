@@ -2,11 +2,14 @@
   "name": "passgram-frontend",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node --experimental-strip-types --import ./lib/test-register.mjs --test lib/domain.test.ts lib/channel.test.ts lib/referral.test.ts lib/communityReferral.test.ts lib/membership.test.ts lib/ton/registry.test.ts lib/server/ownerKey.test.ts"
+    "test": "node --experimental-strip-types --import ./lib/test-register.mjs --test lib/domain.test.ts lib/initData.test.ts lib/rateLimit.test.ts lib/channel.test.ts lib/referral.test.ts lib/communityReferral.test.ts lib/membership.test.ts lib/walletProof.test.ts lib/ton/registry.test.ts lib/server/ownerKey.test.ts lib/server/registryCode.test.ts"
   },
   "dependencies": {
     "@telegram-apps/sdk": "^3.11.8",

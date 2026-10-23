@@ -4,10 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useDemoLab } from "@/lib/demoLabContext";
 import { formatCommunityReferralLink, formatReferralLink, rankAffiliates, type RankedAffiliate } from "@/lib/domain";
 import { computeSplit, formatUsdt } from "@/lib/money";
-import { normalizeTonAddress } from "@/lib/ton/config";
 import { loadLeaderboard } from "@/lib/services/confirmation";
 import { useStore } from "@/lib/store";
-import { Avatar, EmptyState, Field, primaryButton, ReasonList, secondaryButton } from "./ui";
+import { signReceivingWallet } from "@/lib/ton/wallet";
+import { PAYOUT_PROOF_AFFILIATE, PAYOUT_PROOF_COMMUNITY } from "@/lib/ton/walletProof";
+import { Avatar, EmptyState, primaryButton, ReasonList, secondaryButton } from "./ui";
 
 type ReferralSegment = "passgram" | "communities" | "leaderboard";
 
@@ -76,42 +77,48 @@ function PassGramReferralSegment() {
   const store = useStore();
   const lab = useDemoLab();
   const affiliate = store.affiliates.find((item) => item.userId === store.user.id && item.confirmation === "confirmed");
-  const [payout, setPayout] = useState(store.user.payoutAddress);
   const [error, setError] = useState<string | null>(null);
   const [reasons, setReasons] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
   async function register() {
     if (busy || affiliate) return;
-    const account = normalizeTonAddress(payout);
-    if (!account) {
-      setError("Enter a TON address (EQ… / UQ… or 0:…).");
-      return;
-    }
     setError(null);
     setBusy(true);
-    if (lab.enabled) {
-      store.replaceLedger({
-        user: { ...store.user, payoutAddress: account },
-        communities: store.communities,
-        subscriptions: store.subscriptions,
-        payments: store.payments,
-        affiliates: [
-          {
-            userId: store.user.id,
-            code: store.user.username || "democreator",
-            payoutAddress: account,
-            confirmation: "confirmed",
-            createdAt: Date.now(),
-          },
-        ],
+    try {
+      if (lab.enabled) {
+        const account = store.user.payoutAddress || "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs";
+        store.replaceLedger({
+          user: { ...store.user, payoutAddress: account },
+          communities: store.communities,
+          subscriptions: store.subscriptions,
+          payments: store.payments,
+          affiliates: [
+            {
+              userId: store.user.id,
+              code: store.user.username || "democreator",
+              payoutAddress: account,
+              confirmation: "confirmed",
+              createdAt: Date.now(),
+            },
+          ],
+        });
+        return;
+      }
+      const signed = await signReceivingWallet({
+        purpose: PAYOUT_PROOF_AFFILIATE,
+        communityId: 0,
+        telegramUserId: store.user.telegramUserId ? String(store.user.telegramUserId) : "",
       });
+      if (!signed.ok) {
+        setError(signed.message);
+        return;
+      }
+      const outcome = await store.prepareAffiliate(signed.proof);
+      setReasons(outcome.ok ? [] : outcome.reasons);
+    } finally {
       setBusy(false);
-      return;
     }
-    const outcome = await store.prepareAffiliate({ payoutAddress: account });
-    setReasons(outcome.ok ? [] : outcome.reasons);
-    setBusy(false);
   }
 
   return (
@@ -129,17 +136,13 @@ function PassGramReferralSegment() {
             <br />
             PassGram revenue: 2.5% of every single subscription.
           </p>
-          <Field
-            label="Payout address"
-            value={payout}
-            onChange={setPayout}
-            placeholder="EQ…"
-            error={error || undefined}
-            hint="Required. Commissions are sent to this address when a referred subscription is paid."
-          />
+          <p className="text-sm text-[var(--pg-hint)]">
+            Commissions are paid to the connected wallet. You confirm that wallet with a free signature. There is no network fee, and that wallet stays the one recorded with this link.
+          </p>
+          {error ? <p className="text-sm text-[var(--pg-ruby)]">{error}</p> : null}
           <ReasonList reasons={reasons} />
-          <button className={`${primaryButton} w-full`} onClick={() => void register()} disabled={busy || !normalizeTonAddress(payout)}>
-            {busy ? "Creating" : "Create referral link"}
+          <button className={`${primaryButton} w-full`} onClick={() => void register()} disabled={busy}>
+            {busy ? "Confirming wallet" : "Create referral link"}
           </button>
         </section>
       )}
@@ -164,10 +167,7 @@ function CommunitiesReferralSegment() {
   const [message, setMessage] = useState("");
   const [busyId, setBusyId] = useState<number | null>(null);
   const [links, setLinks] = useState<Record<number, string>>({});
-  const [openIds, setOpenIds] = useState<Record<number, boolean>>({});
-  const [payouts, setPayouts] = useState<Record<number, string>>({});
   const [savedPayouts, setSavedPayouts] = useState<Record<number, string>>({});
-  const [fieldErrors, setFieldErrors] = useState<Record<number, string>>({});
   const [copiedId, setCopiedId] = useState<number | null>(null);
 
   useEffect(() => {
@@ -210,16 +210,6 @@ function CommunitiesReferralSegment() {
 
   async function createLink(communityId: number) {
     if (busyId != null) return;
-    if (!openIds[communityId]) {
-      setOpenIds((current) => ({ ...current, [communityId]: true }));
-      return;
-    }
-    const account = normalizeTonAddress(payouts[communityId] ?? "");
-    if (!account) {
-      setFieldErrors((current) => ({ ...current, [communityId]: "Enter a TON address (EQ… / UQ… or 0:…)." }));
-      return;
-    }
-    setFieldErrors((current) => ({ ...current, [communityId]: "" }));
     setBusyId(communityId);
     setMessage("");
     if (lab.enabled) {
@@ -227,25 +217,37 @@ function CommunitiesReferralSegment() {
         ...current,
         [communityId]: formatCommunityReferralLink(communityId, communityLinkCode()),
       }));
-      setSavedPayouts((current) => ({ ...current, [communityId]: account }));
+      setSavedPayouts((current) => ({
+        ...current,
+        [communityId]: store.user.payoutAddress || "Preview wallet",
+      }));
       setBusyId(null);
       return;
     }
     try {
+      const signed = await signReceivingWallet({
+        purpose: PAYOUT_PROOF_COMMUNITY,
+        communityId,
+        telegramUserId: store.user.telegramUserId ? String(store.user.telegramUserId) : "",
+      });
+      if (!signed.ok) {
+        setMessage(signed.message);
+        return;
+      }
       const response = await fetch("/api/telegram/referrals/community/link", {
         method: "POST",
         headers: {
           "content-type": "application/json",
           "x-telegram-init-data": typeof window !== "undefined" ? window.Telegram?.WebApp?.initData || "" : "",
         },
-        body: JSON.stringify({ communityId, payoutAccount: account }),
+        body: JSON.stringify({ communityId, proof: signed.proof }),
       });
       const result = (await response.json()) as { ok?: boolean; message?: string; link?: string; payoutAccount?: string };
       if (!result.ok || !result.link) {
         setMessage(result.message || "Could not create this community referral link.");
       } else {
         setLinks((current) => ({ ...current, [communityId]: result.link! }));
-        setSavedPayouts((current) => ({ ...current, [communityId]: result.payoutAccount || account }));
+        setSavedPayouts((current) => ({ ...current, [communityId]: result.payoutAccount || signed.proof.address }));
         setMessage(result.message?.includes("already active") ? result.message : "");
       }
     } catch {
@@ -315,7 +317,7 @@ function CommunitiesReferralSegment() {
                   </div>
                   {savedPayouts[community.communityId] ? (
                     <div>
-                      <p className="text-xs text-[var(--pg-hint)]">Payout address</p>
+                      <p className="text-xs text-[var(--pg-hint)]">Receiving wallet</p>
                       <p className="mt-1 break-all rounded-2xl bg-[var(--pg-bg)] px-3 py-2 text-xs leading-relaxed">
                         {savedPayouts[community.communityId]}
                       </p>
@@ -345,23 +347,16 @@ function CommunitiesReferralSegment() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {openIds[community.communityId] ? (
-                    <Field
-                      label="Payout address"
-                      value={payouts[community.communityId] ?? ""}
-                      onChange={(value) => setPayouts((current) => ({ ...current, [community.communityId]: value }))}
-                      placeholder="EQ…"
-                      error={fieldErrors[community.communityId] || undefined}
-                      hint="The address must be on the TON network (EQ…, UQ…, or 0:…)."
-                    />
-                  ) : null}
+                  <p className="text-xs leading-relaxed text-[var(--pg-hint)]">
+                    You confirm the connected wallet with a free signature. Commissions for this community are paid to that wallet.
+                  </p>
                   <button
                     type="button"
                     className={`${primaryButton} w-full`}
                     disabled={busyId === community.communityId}
                     onClick={() => void createLink(community.communityId)}
                   >
-                    {busyId === community.communityId ? "Creating" : "Create referral link"}
+                    {busyId === community.communityId ? "Confirming wallet" : "Create referral link"}
                   </button>
                 </div>
               )}
@@ -494,7 +489,7 @@ function AffiliateDashboard({ code, payoutAddress }: { code: string; payoutAddre
         {link}
       </a>
       <p className="text-xs text-[var(--pg-hint)]">Code {code}</p>
-      <p className="text-sm text-[var(--pg-hint)]">Payout account: {payoutAddress}</p>
+      <p className="text-sm text-[var(--pg-hint)]">Receiving wallet: {payoutAddress}</p>
       <div className="grid grid-cols-2 gap-2">
         <button className={primaryButton} onClick={() => void copy()}>
           {copied ? "Copied" : "Copy link"}

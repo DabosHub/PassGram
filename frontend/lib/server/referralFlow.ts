@@ -1,4 +1,6 @@
 import { normalizeTonAddress } from "../ton/config";
+import { PAYOUT_PROOF_AFFILIATE, type PayoutWalletProof } from "../ton/walletProof";
+import { verifyPayoutWalletProof } from "./walletProof";
 import {
   buildAffiliateCode,
   decideAttribution,
@@ -30,29 +32,33 @@ export type ReferralResult = {
 export async function registerAffiliate(
   deps: ReferralDeps,
   initData: string,
-  payoutAccount: string,
+  proof: PayoutWalletProof,
   telegramUsername?: string | null,
-  signerAddress?: string | null,
 ): Promise<ReferralResult> {
   const identity = validateInitData(initData, deps.botToken, deps.now() / 1000);
   if (!identity) return fail("Open PassGram from Telegram so your account can be confirmed.");
-  const payout = normalizeTonAddress(payoutAccount);
-  if (!payout) return fail("Enter a TON payout address (EQ… / UQ… or 0:…).");
-  const signer = signerAddress ? normalizeTonAddress(signerAddress) : null;
-  if (signerAddress && !signer) return fail("The signing wallet could not be read.");
-  const status = await deps.accountStatus(payout);
-  if (status === "missing") return fail("That TON address is invalid. No payment was sent.");
-  if (status === "unknown") return fail("The TON address could not be confirmed. No payment was sent.");
   const existing = await deps.repo.getAffiliateByTelegramUserId(String(identity.userId));
   if (existing) {
     return {
       ok: true,
-      message: "This referral link is already active. The payout address stays as first recorded.",
+      message: "This referral link is already active. The receiving wallet stays as first confirmed.",
       result: "exists",
       affiliate: existing,
       linkPath: `ref_${existing.code}`,
     };
   }
+  const proven = verifyPayoutWalletProof(proof, {
+    purpose: PAYOUT_PROOF_AFFILIATE,
+    communityId: 0,
+    telegramUserId: String(identity.userId),
+    nowSeconds: Math.floor(deps.now() / 1000),
+  });
+  if (!proven.ok) return fail(proven.message);
+  const payout = normalizeTonAddress(proven.address);
+  if (!payout) return fail("This wallet proof is not valid. No link was created.");
+  const status = await deps.accountStatus(payout);
+  if (status === "missing") return fail("That wallet cannot receive payments. No link was created.");
+  if (status === "unknown") return fail("The wallet could not be confirmed. No link was created.");
   let code = buildAffiliateCode({ telegramUsername, telegramUserId: identity.userId });
   if (await deps.repo.getAffiliateByCode(code)) {
     code = buildAffiliateCode({ telegramUsername: null, telegramUserId: identity.userId });
@@ -66,7 +72,7 @@ export async function registerAffiliate(
     code: normalized,
     telegramUserId: String(identity.userId),
     payoutAccount: payout,
-    signerAddress: signer,
+    signerAddress: payout,
     createdAt: new Date(deps.now()).toISOString(),
   });
   return {

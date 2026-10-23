@@ -2,12 +2,15 @@
   "name": "passgram-bot-service",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
   "type": "module",
   "scripts": {
     "start": "node --experimental-strip-types src/index.ts",
     "indexer": "node --experimental-strip-types src/indexer.ts",
     "cron": "node --experimental-strip-types src/cron.ts",
-    "test": "node --test src/split.test.mjs && node --experimental-strip-types --test src/reminder.test.ts src/walletKey.test.ts src/channelMember.test.ts src/inviteLink.test.ts src/referralNotice.test.ts"
+    "test": "node --test src/split.test.mjs && node --experimental-strip-types --test src/reminder.test.ts src/expiredAccess.test.ts src/indexerCursor.test.ts src/paymentDedup.test.ts src/http.test.ts src/config.test.ts src/telegramKick.test.ts src/guards.test.ts src/walletKey.test.ts src/channelMember.test.ts src/inviteLink.test.ts src/referralNotice.test.ts src/registryCode.test.ts"
   },
   "dependencies": {
     "@ton/core": "^0.62.1",

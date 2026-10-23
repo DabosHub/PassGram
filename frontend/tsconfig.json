@@ -17,6 +17,7 @@
     "paths": { "@/*": ["./*"] }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  // Test files run under node --test. They stay out of the Next.js typecheck.
   "exclude": [
     "node_modules",
     "node_modules.incomplete",

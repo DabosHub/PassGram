@@ -13,9 +13,10 @@ if (!match) {
 let url = match[1].trim();
 if ((url.startsWith('"') && url.endsWith('"')) || (url.startsWith("'") && url.endsWith("'"))) url = url.slice(1, -1);
 const sql = fs.readFileSync(path.join(root, "backend/migrations/008_renewal_reminder.sql"), "utf8");
+const remote = /supabase|pooler\.|sslmode=require/i.test(url);
 const pool = new pg.Pool({
   connectionString: url,
-  ssl: url.includes("supabase") ? { rejectUnauthorized: false } : undefined,
+  ssl: remote ? { rejectUnauthorized: process.env.PASSGRAM_DATABASE_SSL_NO_VERIFY !== "1" } : undefined,
 });
 try {
   await pool.query(sql);

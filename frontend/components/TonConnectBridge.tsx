@@ -46,10 +46,11 @@ function TonConnectAdapterSync({ onAddress }: { onAddress?: (address: string | n
           domain: result.domain,
         };
       },
-      account: {
+      currentAccount: () => ({
         address: tonConnectUI.account?.address,
         publicKey: tonConnectUI.account?.publicKey,
-      },
+        walletStateInit: tonConnectUI.account?.walletStateInit,
+      }),
     });
     onAddress?.(wallet?.account.address ?? null);
     return () => setTonConnectAdapter(null);

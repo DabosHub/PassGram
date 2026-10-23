@@ -1,6 +1,10 @@
 import { loadConfig } from "./config.ts";
-import { createPool, listDueRenewalReminders, listExpiredSubscriptions, markRenewalReminded } from "./db.ts";
+import { miniAppCommunityUrl } from "./miniAppName.ts";
+import { createPool, listDueRenewalReminders, listExpiredSubscriptions, markAccessRemoved, markRenewalReminded } from "./db.ts";
+import { createShutdown, sleep } from "./lifecycle.ts";
+import { sanitizeError } from "./log.ts";
 import { createTelegramClient } from "./telegram.ts";
+import type { Pool } from "pg";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -10,14 +14,12 @@ export function renewalReminderText(title: string): string {
 }
 
 export function renewalMiniAppUrl(communityId: number, env: NodeJS.ProcessEnv = process.env): string {
-  const bot = (env.TELEGRAM_BOT_USERNAME || env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || "PassGramBot").trim().replace(/^@/, "");
-  const app = (env.NEXT_PUBLIC_TELEGRAM_MINI_APP_SHORT_NAME || "passgram").trim().replace(/^@/, "") || "passgram";
-  return `https://t.me/${bot}/${app}?startapp=c_${communityId}`;
+  return miniAppCommunityUrl(communityId, env);
 }
 
-export async function runExpirationCronOnce(nowMs = Date.now()): Promise<number> {
+export async function runExpirationCronOnce(nowMs = Date.now(), sharedPool?: Pool): Promise<number> {
   const config = loadConfig();
-  const pool = createPool(config.databaseUrl);
+  const pool = sharedPool ?? createPool(config.databaseUrl);
   const telegram = createTelegramClient(config.telegramBotToken);
   try {
     try {
@@ -32,32 +34,44 @@ export async function runExpirationCronOnce(nowMs = Date.now()): Promise<number>
         }
       }
     } catch (error) {
-      console.error("renewal reminder failed", error);
+      console.error("renewal reminder failed", sanitizeError(error));
     }
     const expired = await listExpiredSubscriptions(pool, nowMs);
     let removed = 0;
     for (const row of expired) {
       if (!row.telegramChatId || !row.telegramUserId) continue;
-      const ok = await telegram.kickThenUnban(row.telegramChatId, row.telegramUserId);
-      if (ok) removed += 1;
+      try {
+        const ok = await telegram.kickThenUnban(row.telegramChatId, row.telegramUserId);
+        if (!ok) continue;
+        await markAccessRemoved(pool, row.communityId, row.telegramUserId, row.expiresAtMs);
+        removed += 1;
+      } catch (error) {
+        console.error("channel removal will be retried", sanitizeError(error));
+      }
     }
     return removed;
   } finally {
-    await pool.end();
+    if (!sharedPool) await pool.end();
   }
 }
 
 async function main() {
   const config = loadConfig();
+  const pool = createPool(config.databaseUrl);
+  const shutdown = createShutdown();
   console.log("PassGram expiration cron started");
-  for (;;) {
-    try {
-      const n = await runExpirationCronOnce();
-      if (n > 0) console.log("removed access for", n, "expired subscriptions");
-    } catch (error) {
-      console.error("cron tick failed", error);
+  try {
+    while (!shutdown.signal.aborted) {
+      try {
+        const n = await runExpirationCronOnce(Date.now(), pool);
+        if (n > 0) console.log("removed access for", n, "expired subscriptions");
+      } catch (error) {
+        console.error("cron tick failed", sanitizeError(error));
+      }
+      await sleep(config.cronIntervalMs, shutdown.signal);
     }
-    await new Promise((r) => setTimeout(r, config.cronIntervalMs));
+  } finally {
+    await pool.end();
   }
 }
 

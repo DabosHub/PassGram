@@ -4,7 +4,7 @@ Lightweight Node service for **TON payment indexing** and **subscription expirat
 
 ## Responsibilities
 
-1. **Indexer** — poll TonCenter for registry transactions / `SubscriptionPaid` hints; upsert `payments` + `subscriptions`; create a one-time Telegram invite link.
+1. **Indexer** — poll TonCenter from the saved logical-time cursor, walking older pages until that cursor; upsert `payments` + `subscriptions`; create a one-time Telegram invite link.
 2. **Cron** — for expired confirmed subscriptions, `banChatMember` then `unbanChatMember` to remove channel access.
 
 ## Environment
@@ -13,10 +13,12 @@ Lightweight Node service for **TON payment indexing** and **subscription expirat
 DATABASE_URL=postgresql://...
 TELEGRAM_BOT_TOKEN=...
 PASSGRAM_REGISTRY_ADDRESS=EQ...
+PASSGRAM_REGISTRY_CODE_HASH=
 TON_API_URL=https://toncenter.com/api/v2
 TONCENTER_API_KEY=          # optional
 INDEXER_POLL_MS=15000
 CRON_INTERVAL_MS=60000
+PASSGRAM_HEALTH_PORT=8080
 ```
 
 ## Run
@@ -31,3 +33,5 @@ npm test
 ```
 
 Apply `backend/migrations/005_ton_payment_fields.sql` before relying on `invite_link` / jetton columns.
+Apply `backend/migrations/010_indexer_state.sql` before starting the indexer. Without that table it cannot remember payments across a restart.
+Apply `backend/migrations/011_payments_dedup.sql` so each chain transaction can be stored only once.

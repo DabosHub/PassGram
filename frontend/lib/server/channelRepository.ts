@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { databaseSsl } from "./databaseSsl";
 import {
   nextActivation,
   nextVerification,
@@ -154,7 +155,7 @@ export function getChannelRepository(): Promise<ChannelRepository> {
 
 async function postgresRepository(databaseUrl: string): Promise<ChannelRepository> {
   // Static import — dynamic `import("pg")` fails under Next/webpack on Vercel.
-  const pool = new Pool({ connectionString: databaseUrl });
+  const pool = new Pool({ connectionString: databaseUrl, ssl: databaseSsl(databaseUrl) });
   return new PostgresChannelRepository(pool);
 }
 

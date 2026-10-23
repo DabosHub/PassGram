@@ -31,7 +31,9 @@ export async function buildChannelDeps(): Promise<ChannelDeps> {
       const members = await getMembershipRepository();
       return members.listCurrentSubscriberIds(communityId, nowMs);
     },
-    accountStatus: async (accountId) => (isTonAddress(accountId) ? "exists" : "missing"),
+    // A signed TON address is enough. The registry attaches Gram to deploy the recipient USDT wallet,
+    // so an account that is not active on-chain yet is still payable. "implicit" means it was not looked up.
+    accountStatus: async (accountId) => (isTonAddress(accountId) ? "implicit" : "missing"),
     getCreatorAttribution: async (telegramUserId) => {
       const attribution = await referralRepo.getAttribution(telegramUserId);
       if (!attribution) return null;

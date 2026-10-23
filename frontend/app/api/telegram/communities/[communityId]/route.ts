@@ -1,8 +1,13 @@
+export const runtime = "nodejs";
+
+import { limitedResponse } from "@/lib/server/rateLimit";
 import { getPublicCommunityListing } from "@/lib/server/channelFlow";
 import { buildChannelDeps, channelFailure } from "@/lib/server/channelDeps";
 import { getMembershipRepository } from "@/lib/server/membershipRepository";
 
 export async function GET(_request: Request, context: { params: Promise<{ communityId: string }> }) {
+  const limited = limitedResponse(_request, "read");
+  if (limited) return limited;
   try {
     const { communityId: raw } = await context.params;
     if (!/^[1-9]\d{0,11}$/.test(raw)) {

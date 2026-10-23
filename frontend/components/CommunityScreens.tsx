@@ -15,7 +15,7 @@ import {
 } from "@/lib/domain";
 import { formatCommunityReferralPercent, formatDate, formatUsdt, formatWhen, parseCommunityReferralBps } from "@/lib/money";
 import { parseCommunityPrice, parseDurationDays } from "@/lib/channelPolicy";
-import { contractIsConfigured, normalizeTonAddress, tonConfig } from "@/lib/ton/config";
+import { contractIsConfigured, tonConfig } from "@/lib/ton/config";
 import { buildSetCommunityPausedBody, buildSetCommunityReferralBody, buildUpdateCommunityBody } from "@/lib/ton/registry";
 import { sendRegistryCall } from "@/lib/ton/send";
 import { buildDemoLastTx } from "@/lib/demoLab";
@@ -40,11 +40,12 @@ export function CommunityRoute({
 
   useEffect(() => {
     if (linkError === "invalid_community" || communityId == null) return;
-    const existing = store.communities.find((item) => item.id === communityId && item.confirmation === "confirmed");
-    if (existing) return;
+    const cached = store.communities.some((item) => item.id === communityId && item.confirmation === "confirmed");
     let cancelled = false;
-    setLoading(true);
-    setLoadError(null);
+    if (!cached) {
+      setLoading(true);
+      setLoadError(null);
+    }
     void fetch(`/api/telegram/communities/${communityId}`)
       .then(async (response) => {
         const result = (await response.json()) as {
@@ -94,7 +95,7 @@ export function CommunityRoute({
     return () => {
       cancelled = true;
     };
-  }, [communityId, linkError, store]);
+  }, [communityId, linkError]);
 
   if (linkError === "invalid_community" || communityId == null) {
     return <Unavailable title="This community link is invalid." body="The link does not contain a usable community id." />;
@@ -737,7 +738,6 @@ function CommunitySettings({ community, go }: { community: CommunityRecord; go: 
   const lab = useDemoLab();
   const [price, setPrice] = useState(formatUsdt(community.price));
   const [duration, setDuration] = useState(String(Math.max(1, Math.round(community.periodSeconds / 86_400))));
-  const [payout, setPayout] = useState(community.payoutAddress);
   const [offerMessage, setOfferMessage] = useState("");
   const [offerError, setOfferError] = useState("");
   const [offerBusy, setOfferBusy] = useState(false);
@@ -769,14 +769,8 @@ function CommunitySettings({ community, go }: { community: CommunityRecord; go: 
     if (offerBusy || paused) return;
     const priceUsdt = parseCommunityPrice(price);
     const durationDays = parseDurationDays(duration);
-    const payoutAccount = normalizeTonAddress(payout);
     if (!priceUsdt || durationDays == null) {
       setOfferError("Enter at least 1 USDT and a whole number of days from 1 to 366.");
-      setOfferMessage("");
-      return;
-    }
-    if (!payoutAccount) {
-      setOfferError("Enter a TON address (EQ… / UQ… or 0:…).");
       setOfferMessage("");
       return;
     }
@@ -801,38 +795,25 @@ function CommunitySettings({ community, go }: { community: CommunityRecord; go: 
             communityId: community.id,
             price: priceUsdt,
             durationSeconds: durationDays * 86_400,
-            payout: payoutAccount,
           }),
         });
         if (!signed) {
-          setOfferError("Your wallet did not sign UpdateCommunity. The price, duration, and payout address were not changed.");
+          setOfferError("Your wallet did not sign UpdateCommunity. The price and duration were not changed.");
           return;
         }
-        const response = await fetch(`/api/telegram/communities/${community.id}/offer`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-telegram-init-data": typeof window !== "undefined" ? window.Telegram?.WebApp?.initData || "" : "",
-          },
-          body: JSON.stringify({ price, durationDays, payoutAccount }),
-        });
-        const result = (await response.json()) as { ok?: boolean; message?: string };
-        if (!result.ok) {
-          setOfferError(result.message || "The wallet signed the update, but the public listing could not be saved.");
-          return;
-        }
+        setOfferMessage(
+          "Submitted from the wallet that created this community. Subscribers keep the current price and duration until the network confirms this update. Payments continue to the wallet that registered this community.",
+        );
+        return;
       }
       const saved = store.patchOwnedCommunity(community.id, {
         price: priceUsdt,
         periodSeconds: durationDays * 86_400,
-        payoutAddress: payoutAccount,
       });
       setOfferError(saved ? "" : "This community could not be updated.");
       setOfferMessage(
         saved
-          ? lab.enabled
-            ? "Saved in this preview. New subscribers and future renewals use this price, duration, and payout address. Current subscription periods stay unchanged, and payments already sent stay where they were paid."
-            : "Submitted from the wallet that created this community. New subscribers and future renewals use this price, duration, and payout address after the chain update is confirmed. Current subscription periods stay unchanged, and payments already sent stay where they were paid."
+          ? "Saved in this preview. New subscribers and future renewals use this price and duration. Payments continue to the wallet that registered this community."
           : "",
       );
     } finally {
@@ -1052,21 +1033,18 @@ function CommunitySettings({ community, go }: { community: CommunityRecord; go: 
         {offerOpen ? (
           <div className="space-y-3 border-t border-[var(--pg-line)] px-4 py-4">
             <p className="text-sm text-[var(--pg-hint)]">
-              Price, duration, and the creator payout address apply to new subscriptions and to renewals after this save. A subscriber who already paid keeps the period they bought. Payments already sent stay in the wallet that received them.
+              Price and duration apply to new subscriptions and renewals after the network confirms the update. Subscribers keep the current price until then. A subscriber who already paid keeps the period they bought. Payments continue to the wallet that registered this community.
             </p>
+            <div className="rounded-2xl bg-[var(--pg-bg)] px-3 py-3">
+              <p className="text-xs text-[var(--pg-hint)]">Receiving wallet</p>
+              <p className="mt-1 break-all text-sm">{community.payoutAddress || "The wallet that registers this community"}</p>
+            </div>
             <Field label="Subscription price (USDT)" value={price} onChange={setPrice} inputMode="decimal" placeholder="1.5" />
             <Field label="Subscription duration (days)" value={duration} onChange={setDuration} inputMode="numeric" placeholder="30" />
-            <Field
-              label="Creator TON payout address"
-              value={payout}
-              onChange={setPayout}
-              placeholder="EQ…"
-              hint="New subscriptions and renewals pay the creator share to this address."
-            />
             {offerError ? <p className="text-sm text-[var(--pg-ruby)]">{offerError}</p> : null}
             {offerMessage ? <p className="text-sm text-[var(--pg-blue)]">{offerMessage}</p> : null}
             <button type="button" className={`${primaryButton} w-full`} onClick={() => void saveOffer()} disabled={paused || offerBusy}>
-              {offerBusy ? "Opening wallet" : "Save update"}
+              {offerBusy ? "Opening wallet" : "Submit update"}
             </button>
           </div>
         ) : null}

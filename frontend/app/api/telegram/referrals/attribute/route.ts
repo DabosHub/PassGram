@@ -1,8 +1,13 @@
+export const runtime = "nodejs";
+
+import { limitedResponse } from "@/lib/server/rateLimit";
 import { attributeReferral } from "@/lib/server/referralFlow";
 import { buildReferralDeps } from "@/lib/server/referralDeps";
 import { channelFailure, initDataFrom } from "@/lib/server/channelDeps";
 
 export async function POST(request: Request) {
+  const limited = limitedResponse(request, "write");
+  if (limited) return limited;
   try {
     const body = (await request.json()) as { code?: unknown };
     const deps = await buildReferralDeps();

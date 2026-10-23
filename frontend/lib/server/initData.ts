@@ -24,7 +24,7 @@ export function validateInitData(initData: string, botToken: string, nowSeconds 
   if (!hash || !/^[0-9a-f]{64}$/.test(hash)) return null;
   params.delete("hash");
   const dataCheck = [...params.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     .map(([key, value]) => `${key}=${value}`)
     .join("\n");
   const secret = crypto.createHmac("sha256", "WebAppData").update(botToken).digest();

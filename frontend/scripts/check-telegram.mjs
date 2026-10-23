@@ -79,7 +79,9 @@ if (publicBase) {
   const set = await telegram("setWebhook", {
     url: webhookUrl,
     secret_token: secret,
-    allowed_updates: ["message", "chat_shared", "my_chat_member", "chat_member"],
+    // Same list as set-telegram-webhook.mjs. chat_shared arrives inside message.
+    // chat_member is a flood and this bot does not read it.
+    allowed_updates: ["message", "my_chat_member"],
     drop_pending_updates: false,
   });
   console.log(`SET_WEBHOOK_OK=${set.ok ? 1 : 0}`);

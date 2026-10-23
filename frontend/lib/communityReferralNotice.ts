@@ -1,3 +1,5 @@
+import { miniAppShortNameFrom } from "./domain";
+
 export type CommunityReferralNoticeKind = "activated" | "updated" | "stopped";
 
 export function communityReferralNoticeKind(before: {
@@ -76,7 +78,7 @@ export async function deliverReferralConversionNotice(input: {
 
 export function communityReferralNoticeUrl(communityId: number, env: NodeJS.ProcessEnv = process.env): string {
   const bot = (env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || env.TELEGRAM_BOT_USERNAME || "PassGramBot").trim().replace(/^@/, "");
-  const app = (env.NEXT_PUBLIC_TELEGRAM_MINI_APP_SHORT_NAME || "passgram").trim().replace(/^@/, "") || "passgram";
+  const app = miniAppShortNameFrom(env);
   return `https://t.me/${bot}/${app}?startapp=c_${communityId}`;
 }
 

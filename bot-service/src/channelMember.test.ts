@@ -8,5 +8,7 @@ test("channel membership ignores removed subscribers", () => {
   assert.equal(isInsideChannel("left"), false);
   assert.equal(isInsideChannel("kicked"), false);
   assert.equal(isInsideChannel("restricted", false), false);
+  assert.equal(isInsideChannel("restricted", undefined), false);
+  assert.equal(isInsideChannel("restricted", true), true);
   assert.equal(isInsideChannel(undefined), false);
 });

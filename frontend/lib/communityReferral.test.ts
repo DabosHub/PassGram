@@ -26,14 +26,35 @@ import {
   resolveCommunityReferrerPayout,
   type CommunityReferralRepository,
 } from "./server/communityReferralFlow.ts";
+import { signPayoutWalletProof } from "./server/walletProof.ts";
+import { PAYOUT_PROOF_COMMUNITY, type PayoutWalletProof } from "./ton/walletProof.ts";
 
 const token = "test-token";
 const payout = "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs";
 
+function communityProof(userId: number, communityId: number, seed: number) {
+  return signPayoutWalletProof({
+    seed: Buffer.alloc(32, seed),
+    purpose: PAYOUT_PROOF_COMMUNITY,
+    communityId,
+    telegramUserId: String(userId),
+  });
+}
+
+const brokenProof: PayoutWalletProof = {
+  signature: "aa",
+  address: "not-a-wallet",
+  timestamp: 1,
+  domain: "passgram.app",
+  schema: "nope",
+  cell: "aa",
+  walletStateInit: "aa",
+};
+
 function sign(userId: number, authDate = Math.floor(Date.now() / 1000)): string {
   const fields: Record<string, string> = { auth_date: String(authDate), user: JSON.stringify({ id: userId }) };
   const dataCheck = Object.entries(fields)
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     .map(([key, value]) => `${key}=${value}`)
     .join("\n");
   const secret = crypto.createHmac("sha256", "WebAppData").update(token).digest();
@@ -132,7 +153,7 @@ test("stopping the referral program hides the community and keeps locked payouts
   assert.equal(saved?.referralPercentBps, 1250);
   assert.equal((await listReferralEnabledCommunities(deps)).communities.length, 0);
 
-  const link = await createCommunityReferralLink(deps, sign(9), 7, payout);
+  const link = await createCommunityReferralLink(deps, sign(9), 7, communityProof(9, 7, 9));
   assert.equal(link.ok, false);
   const again = await attributeCommunityReferral(deps, attributions, sign(12), 7, "mira");
   assert.equal(again.ok, false);
@@ -206,7 +227,7 @@ test("deactivating a community closes payments and new referrals, then reactivat
   assert.equal(saved?.referralPercentBps, 1000);
   assert.equal(saved?.priceUsdt, "1500000");
   assert.equal((await listReferralEnabledCommunities(deps)).communities.length, 0);
-  assert.equal((await createCommunityReferralLink(deps, sign(9), 7, payout)).ok, false);
+  assert.equal((await createCommunityReferralLink(deps, sign(9), 7, communityProof(9, 7, 9))).ok, false);
   assert.equal((await attributeCommunityReferral(deps, attributions, sign(12), 7, "mira")).ok, false);
   const whilePaused = await resolveCommunityReferrerPayout(deps, attributions, sign(11), 7);
   assert.equal(whilePaused.communityReferrerPayout, null);
@@ -290,15 +311,16 @@ test("the community creator is notified once when a marketer creates a referral 
     accountStatus: async () => "exists",
   };
   const communityRepo = createMemoryCommunityReferralRepository();
-  const otherPayout = "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c";
-  const first = await createCommunityReferralLink(deps, sign(9), 7, payout, communityRepo);
+  const firstProof = communityProof(9, 7, 9);
+  const secondProof = communityProof(9, 7, 10);
+  const first = await createCommunityReferralLink(deps, sign(9), 7, firstProof, communityRepo);
   assert.equal(first.ok, true);
-  assert.equal(first.payoutAccount, payout);
-  const second = await createCommunityReferralLink(deps, sign(9), 7, otherPayout, communityRepo);
+  assert.equal(first.payoutAccount, firstProof.address);
+  const second = await createCommunityReferralLink(deps, sign(9), 7, secondProof, communityRepo);
   assert.equal(second.ok, true);
   assert.equal(second.link, first.link);
-  assert.equal(second.payoutAccount, payout);
-  assert.match(second.message, /first recorded/);
+  assert.equal(second.payoutAccount, firstProof.address);
+  assert.match(second.message, /first confirmed/);
   assert.deepEqual(messages, ["42", messages[1]]);
   assert.match(messages[1], /created a referral link for Alpha/);
   assert.match(messages[1], /10%/);
@@ -325,9 +347,10 @@ test("each community referral link keeps its own payout and ignores a PassGram a
     accountStatus: async () => "exists",
   };
   const links = createMemoryCommunityReferralRepository();
-  const otherPayout = "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c";
-  const first = await createCommunityReferralLink(deps, sign(9), 7, payout, links);
-  const second = await createCommunityReferralLink(deps, sign(9), 8, otherPayout, links);
+  const firstProof = communityProof(9, 7, 11);
+  const secondProof = communityProof(9, 8, 12);
+  const first = await createCommunityReferralLink(deps, sign(9), 7, firstProof, links);
+  const second = await createCommunityReferralLink(deps, sign(9), 8, secondProof, links);
   assert.equal(first.ok, true);
   assert.equal(second.ok, true);
   assert.notEqual(first.code, second.code);
@@ -335,12 +358,12 @@ test("each community referral link keeps its own payout and ignores a PassGram a
   assert.equal((await attributeCommunityReferral(deps, links, sign(11), 8, second.code!)).result, "locked");
   const payFirst = await resolveCommunityReferrerPayout(deps, links, sign(11), 7);
   const paySecond = await resolveCommunityReferrerPayout(deps, links, sign(11), 8);
-  assert.equal(payFirst.communityReferrerPayout, payout);
-  assert.equal(paySecond.communityReferrerPayout, otherPayout);
-  const repeat = await createCommunityReferralLink(deps, sign(9), 7, "not-a-wallet", links);
+  assert.equal(payFirst.communityReferrerPayout, firstProof.address);
+  assert.equal(paySecond.communityReferrerPayout, secondProof.address);
+  const repeat = await createCommunityReferralLink(deps, sign(9), 7, brokenProof, links);
   assert.equal(repeat.ok, true);
-  assert.equal(repeat.payoutAccount, payout);
-  const missing = await createCommunityReferralLink(deps, sign(15), 7, "not-a-wallet", links);
+  assert.equal(repeat.payoutAccount, firstProof.address);
+  const missing = await createCommunityReferralLink(deps, sign(15), 7, brokenProof, links);
   assert.equal(missing.ok, false);
 });
 
@@ -401,11 +424,12 @@ test("settlement signs the stored community payout for the paying wallet", async
       accountStatus: async () => "exists",
     };
     const links = createMemoryCommunityReferralRepository();
-    const created = await createCommunityReferralLink(deps, sign(9), 7, payout, links);
+    const createdProof = communityProof(9, 7, 13);
+    const created = await createCommunityReferralLink(deps, sign(9), 7, createdProof, links);
     assert.equal((await attributeCommunityReferral(deps, links, sign(11), 7, created.code!)).result, "locked");
     const settled = await resolveCommunityReferrerPayout(deps, links, sign(11), 7, subscriber);
     assert.equal(settled.ok, true);
-    assert.equal(settled.communityReferrerPayout, payout);
+    assert.equal(settled.communityReferrerPayout, createdProof.address);
     const expectedExpiry = Math.floor(Date.now() / 1000) + 600;
     assert.ok(Math.abs((settled.referralAuthorizationValidUntil ?? 0) - expectedExpiry) < 5);
     const prefix = Buffer.from("302e020100300506032b657004220420", "hex");
@@ -416,7 +440,7 @@ test("settlement signs the stored community payout for the paying wallet", async
       registry,
       communityId: 7,
       subscriber,
-      payout,
+      payout: createdProof.address,
       validUntil: settled.referralAuthorizationValidUntil!,
     });
     const signature = Buffer.from(settled.referralAuthorization || "", "base64");

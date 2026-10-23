@@ -1,5 +1,7 @@
 import { tonWalletKey } from "../ton/walletKey";
+import { ACCOUNT_LINK_PURPOSE, ACCOUNT_WALLET_SCHEMA, type PayoutWalletProof } from "../ton/walletProof";
 import { validateInitData } from "./initData";
+import { verifyPayoutWalletProof } from "./walletProof";
 import {
   getMembershipRepository,
   type MembershipPaymentRow,
@@ -206,17 +208,41 @@ export async function readSubscriberLedger(
   return { ok: true, subscriptions, payments: ledgerPayments };
 }
 
+export async function linkedSubscriberWallet(
+  initData: string,
+  botToken: string,
+  repo?: MembershipRepository,
+  nowSeconds = Date.now() / 1000,
+): Promise<{ ok: true; address: string | null } | { ok: false; message: string }> {
+  const identity = validateInitData(initData, botToken, nowSeconds);
+  if (!identity) return { ok: false, message: "Open PassGram from Telegram so your account can be confirmed." };
+  const store = repo ?? (await getMembershipRepository());
+  return { ok: true, address: await store.getLinkedWallet(identity.userId) };
+}
+
 export async function linkSubscriberWallet(
   initData: string,
   botToken: string,
-  address: string,
+  proof: PayoutWalletProof | null,
   repo?: MembershipRepository,
   nowSeconds = Date.now() / 1000,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const identity = validateInitData(initData, botToken, nowSeconds);
   if (!identity) return { ok: false, message: "Open PassGram from Telegram so your account can be confirmed." };
-  const key = tonWalletKey(address);
-  if (!key) return { ok: false, message: "Enter a TON wallet address." };
+  if (!proof) return { ok: false, message: "Sign with the wallet you want to use. There is no network fee." };
+  const checked = verifyPayoutWalletProof(
+    proof,
+    {
+      purpose: ACCOUNT_LINK_PURPOSE,
+      communityId: 0,
+      telegramUserId: String(identity.userId),
+      nowSeconds,
+      schema: ACCOUNT_WALLET_SCHEMA,
+    },
+  );
+  if (!checked.ok) return checked;
+  const key = tonWalletKey(checked.address);
+  if (!key) return { ok: false, message: "This wallet proof is not valid. No link was created." };
   const store = repo ?? (await getMembershipRepository());
   const linked = await store.linkTonWallet(identity.userId, key);
   if (linked === "taken") return { ok: false, message: "This wallet is already linked to another Telegram account." };

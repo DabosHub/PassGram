@@ -13,13 +13,15 @@ import {
   type ReferralDeps,
 } from "./server/referralFlow.ts";
 import { MemoryReferralRepository } from "./server/referralRepository.ts";
+import { signPayoutWalletProof } from "./server/walletProof.ts";
+import { PAYOUT_PROOF_AFFILIATE } from "./ton/walletProof.ts";
 
 const token = "test-token";
 
 function sign(userId: number, authDate = Math.floor(Date.now() / 1000)): string {
   const fields: Record<string, string> = { auth_date: String(authDate), user: JSON.stringify({ id: userId }) };
   const dataCheck = Object.entries(fields)
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     .map(([key, value]) => `${key}=${value}`)
     .join("\n");
   const secret = crypto.createHmac("sha256", "WebAppData").update(token).digest();
@@ -43,12 +45,27 @@ test("first-touch attribution locks on Start and ignores later invites", async (
     now: () => Date.now(),
     accountStatus: async () => "exists",
   };
-  const marketer = await registerAffiliate(deps, sign(1), "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs", "mira");
+  const firstProof = signPayoutWalletProof({
+    seed: Buffer.alloc(32, 1),
+    purpose: PAYOUT_PROOF_AFFILIATE,
+    communityId: 0,
+    telegramUserId: "1",
+  });
+  const secondProof = signPayoutWalletProof({
+    seed: Buffer.alloc(32, 2),
+    purpose: PAYOUT_PROOF_AFFILIATE,
+    communityId: 0,
+    telegramUserId: "1",
+  });
+  const marketer = await registerAffiliate(deps, sign(1), firstProof, "mira");
   assert.equal(marketer.ok, true);
+  assert.equal(marketer.affiliate?.payoutAccount, firstProof.address);
+  assert.equal(marketer.affiliate?.signerAddress, firstProof.address);
   assert.ok(marketer.affiliate?.code);
-  const repeat = await registerAffiliate(deps, sign(1), "EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c", "mira");
+  const repeat = await registerAffiliate(deps, sign(1), secondProof, "mira");
   assert.equal(repeat.result, "exists");
-  assert.equal(repeat.affiliate?.payoutAccount, marketer.affiliate?.payoutAccount);
+  assert.equal(repeat.affiliate?.payoutAccount, firstProof.address);
+  assert.notEqual(secondProof.address, firstProof.address);
 
   const fromStart = await attributeFromWebhook(deps, {
     message: { from: { id: 42 }, text: `/start ref_${marketer.affiliate?.code}` },

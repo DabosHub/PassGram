@@ -1,8 +1,13 @@
+export const runtime = "nodejs";
+
+import { limitedResponse } from "@/lib/server/rateLimit";
 import { readReferralState } from "@/lib/server/referralFlow";
 import { buildReferralDeps } from "@/lib/server/referralDeps";
 import { channelFailure, initDataFrom } from "@/lib/server/channelDeps";
 
 export async function GET(request: Request) {
+  const limited = limitedResponse(request, "read");
+  if (limited) return limited;
   try {
     const deps = await buildReferralDeps();
     const result = await readReferralState(deps, initDataFrom(request));

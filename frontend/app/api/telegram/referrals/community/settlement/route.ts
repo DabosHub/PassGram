@@ -1,3 +1,6 @@
+export const runtime = "nodejs";
+
+import { limitedResponse } from "@/lib/server/rateLimit";
 import { buildChannelDeps, channelFailure, initDataFrom } from "@/lib/server/channelDeps";
 import {
   getCommunityReferralRepository,
@@ -5,6 +8,8 @@ import {
 } from "@/lib/server/communityReferralFlow";
 
 export async function GET(request: Request) {
+  const limited = limitedResponse(request, "read");
+  if (limited) return limited;
   try {
     const url = new URL(request.url);
     const communityId = Number(url.searchParams.get("communityId"));

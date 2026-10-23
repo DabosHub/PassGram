@@ -228,9 +228,6 @@ export function validateCommunityDraft(draft: CommunityDraft): Record<string, st
   if (draft.accessMode === "token_gate") {
     errors.accessMode = "Token-Gating is not available. This contract only accepts paid USDT subscriptions.";
   }
-  if (!normalizeTonAddress(draft.payoutAddress)) {
-    errors.payoutAddress = "Enter a TON address (EQ… / UQ… or 0:…).";
-  }
   if (draft.automationMode === "full" && !chat) {
     errors.telegramChatId = "Full automation needs the Telegram chat id before the bot can be checked.";
   }
@@ -312,8 +309,12 @@ export function referralBotUsername(): string {
 }
 
 /** BotFather Mini App short name. Direct links are t.me/<bot>/<short_name>?startapp=… */
+export function miniAppShortNameFrom(env: NodeJS.ProcessEnv): string {
+  return (env.TELEGRAM_MINI_APP_SHORT_NAME || env.NEXT_PUBLIC_TELEGRAM_MINI_APP_SHORT_NAME || "passgram").trim().replace(/^@/, "") || "passgram";
+}
+
 export function miniAppShortName(): string {
-  return (process.env.NEXT_PUBLIC_TELEGRAM_MINI_APP_SHORT_NAME || "passgram").trim().replace(/^@/, "") || "passgram";
+  return miniAppShortNameFrom(process.env);
 }
 
 /**

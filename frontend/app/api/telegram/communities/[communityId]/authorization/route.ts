@@ -1,7 +1,12 @@
+export const runtime = "nodejs";
+
+import { limitedResponse } from "@/lib/server/rateLimit";
 import { authorizeCommunityRegistration, OwnerKeyError } from "@/lib/server/communityAuthorization";
 import { buildChannelDeps, channelFailure, initDataFrom } from "@/lib/server/channelDeps";
 
 export async function POST(request: Request, context: { params: Promise<{ communityId: string }> }) {
+  const limited = limitedResponse(request, "write");
+  if (limited) return limited;
   try {
     const { communityId: raw } = await context.params;
     if (!/^[1-9]\d{0,11}$/.test(raw)) {

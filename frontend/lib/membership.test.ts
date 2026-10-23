@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import test from "node:test";
 import { resolveSubscriberView } from "./subscriberAccess.ts";
 import { mergeSubscriberSnapshot } from "./subscriberLedger.ts";
-import { assembleOwnerLedger } from "./server/membershipFlow.ts";
-import type { MembershipPaymentRow, MembershipRow, OwnedCommunityRow } from "./server/membershipRepository.ts";
+import { assembleOwnerLedger, linkSubscriberWallet } from "./server/membershipFlow.ts";
+import type { MembershipPaymentRow, MembershipRepository, MembershipRow, OwnedCommunityRow } from "./server/membershipRepository.ts";
+import { signPayoutWalletProof } from "./server/walletProof.ts";
 import type { PaymentRecord, SubscriptionRecord } from "./store.tsx";
+import { ACCOUNT_LINK_PURPOSE, ACCOUNT_WALLET_SCHEMA, PAYOUT_PROOF_AFFILIATE } from "./ton/walletProof.ts";
 import { tonWalletKey } from "./ton/walletKey.ts";
 
 test("owner ledger keeps a community's members and payments together", () => {
@@ -132,4 +135,57 @@ test("a subscriber outside the channel keeps the old card until join is verified
   });
   assert.deepEqual(stillInside.hold, []);
   assert.equal(stillInside.offer, null);
+});
+
+function signedInitData(userId: number, authDate: number) {
+  const token = "test-bot";
+  const fields: Record<string, string> = { auth_date: String(authDate), user: JSON.stringify({ id: userId }) };
+  const dataCheck = Object.entries(fields)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+  const secret = crypto.createHmac("sha256", "WebAppData").update(token).digest();
+  const hash = crypto.createHmac("sha256", secret).update(dataCheck).digest("hex");
+  return { token, data: new URLSearchParams({ ...fields, hash }).toString() };
+}
+
+test("a wallet link requires a signature and the owner can take a pre-claimed address back", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const rows = new Map<number, string>();
+  const repo = {
+    async getLinkedWallet(id: number) {
+      return rows.get(id) ?? null;
+    },
+    async linkTonWallet(id: number, address: string) {
+      for (const [user, saved] of rows) {
+        if (saved === address && user !== id) rows.delete(user);
+      }
+      rows.set(id, address);
+      return "linked" as const;
+    },
+  } as unknown as MembershipRepository;
+  const victim = signedInitData(5, now);
+  const attacker = signedInitData(9, now);
+  const proof = signPayoutWalletProof({
+    seed: Buffer.alloc(32, 8),
+    purpose: ACCOUNT_LINK_PURPOSE,
+    communityId: 0,
+    telegramUserId: "5",
+    timestamp: now,
+    schema: ACCOUNT_WALLET_SCHEMA,
+  });
+  rows.set(9, tonWalletKey(proof.address) || proof.address);
+  assert.equal((await linkSubscriberWallet(attacker.data, attacker.token, null, repo, now)).ok, false);
+  const commission = signPayoutWalletProof({
+    seed: Buffer.alloc(32, 8),
+    purpose: PAYOUT_PROOF_AFFILIATE,
+    communityId: 0,
+    telegramUserId: "5",
+    timestamp: now,
+  });
+  assert.equal((await linkSubscriberWallet(victim.data, victim.token, commission, repo, now)).ok, false);
+  assert.equal((await linkSubscriberWallet(attacker.data, attacker.token, proof, repo, now)).ok, false);
+  assert.equal((await linkSubscriberWallet(victim.data, victim.token, proof, repo, now)).ok, true);
+  assert.equal(rows.get(5), tonWalletKey(proof.address));
+  assert.equal(rows.has(9), false);
 });

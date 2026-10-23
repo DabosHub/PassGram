@@ -18,10 +18,33 @@ export type TelegramClient = {
   call: (method: string, body?: Record<string, unknown>) => Promise<any>;
 };
 
+const MEMBER_CACHE_MS = 30_000;
+const memberCache = new Map<string, { at: number; value: unknown }>();
+
+function memberCacheKey(token: string, method: string, body: Record<string, unknown> | undefined): string {
+  const chat = body?.chat_id ?? "";
+  const user = body?.user_id ?? "";
+  return `${token.length}:${method}:${chat}:${user}`;
+}
+
 export function createTelegramClient(token: string): TelegramClient {
   return {
-    call(method, body) {
-      return callTelegram(token, method, body, true);
+    async call(method, body) {
+      const cached = method === "getChatMember" || method === "getChatMemberCount";
+      const key = cached ? memberCacheKey(token, method, body) : "";
+      if (cached) {
+        const hit = memberCache.get(key);
+        if (hit && Date.now() - hit.at < MEMBER_CACHE_MS) return hit.value;
+      }
+      const value = await callTelegram(token, method, body, true);
+      if (cached) {
+        memberCache.set(key, { at: Date.now(), value });
+        if (memberCache.size > 2000) {
+          const oldest = memberCache.keys().next().value;
+          if (oldest) memberCache.delete(oldest);
+        }
+      }
+      return value;
     },
   };
 }

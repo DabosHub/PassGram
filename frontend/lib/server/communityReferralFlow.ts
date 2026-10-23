@@ -1,11 +1,16 @@
 import { randomBytes } from "node:crypto";
+import { Pool } from "pg";
+import { databaseSsl } from "./databaseSsl";
 import { creatorReferralLinkNoticeText, communityReferralNoticeUrl } from "../communityReferralNotice";
 import { formatCommunityReferralLink } from "../domain";
 import { formatCommunityReferralPercent, normalizeCode } from "../money";
 import { COMMUNITY_REFERRAL_AUTHORIZATION_TTL_SECONDS } from "../ton/communityAuthorization";
 import { normalizeTonAddress } from "../ton/config";
+import { PAYOUT_PROOF_COMMUNITY, type PayoutWalletProof } from "../ton/walletProof";
+import { verifyPayoutWalletProof } from "./walletProof";
 import type { ChannelDeps } from "./channelFlow";
 import { signCommunityReferralAuthorization } from "./communityAuthorization";
+import { requireCurrentRegistry } from "./registryCode";
 import { validateInitData } from "./initData";
 
 export type CommunityAttributionRecord = {
@@ -95,13 +100,7 @@ function linkFromRow(row: Record<string, unknown>): CommunityReferralLinkRecord 
 }
 
 async function postgresCommunityReferralRepository(databaseUrl: string): Promise<CommunityReferralRepository> {
-  const loaded = (await import("pg").catch(() => null)) as {
-    Pool: new (config: { connectionString: string }) => {
-      query: (text: string, values?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
-    };
-  } | null;
-  if (!loaded) return memoryCommunityReferralRepository;
-  const pool = new loaded.Pool({ connectionString: databaseUrl });
+  const pool = new Pool({ connectionString: databaseUrl, ssl: databaseSsl(databaseUrl) });
   return {
     async getAttribution(communityId, subscriberTelegramUserId) {
       const result = await pool.query(
@@ -160,6 +159,11 @@ async function postgresCommunityReferralRepository(databaseUrl: string): Promise
     },
     async recordReferralLink(row) {
       try {
+        await pool.query(
+          `insert into telegram_profiles (telegram_user_id) values ($1)
+           on conflict (telegram_user_id) do nothing`,
+          [row.referrerTelegramUserId],
+        );
         const result = await pool.query(
           `insert into community_referral_links (
             community_id, referrer_telegram_user_id, referrer_code, payout_account
@@ -189,7 +193,7 @@ function newCommunityReferralCode(): string {
 function existingLinkResult(communityId: number, row: CommunityReferralLinkRecord, origin: string | null): LinkResult {
   return {
     ok: true,
-    message: "This community referral link is already active. The payout address stays as first recorded.",
+    message: "This community referral link is already active. The receiving wallet stays as first confirmed.",
     link: formatCommunityReferralLink(communityId, row.code, origin),
     code: row.code,
     payoutAccount: row.payoutAccount,
@@ -197,14 +201,14 @@ function existingLinkResult(communityId: number, row: CommunityReferralLinkRecor
 }
 
 /**
- * Creates one community referral link. The payout address belongs to this community only
- * and is never read from, or written to, the PassGram affiliate record.
+ * Creates one community referral link. The receiving wallet is the wallet that signed
+ * this link for this community. It is never read from, or written to, the PassGram affiliate record.
  */
 export async function createCommunityReferralLink(
   channelDeps: ChannelDeps,
   initData: string,
   communityId: number,
-  payoutAccount: string,
+  proof: PayoutWalletProof,
   communityRepo?: CommunityReferralRepository,
 ): Promise<LinkResult> {
   const identity = validateInitData(initData, channelDeps.botToken, channelDeps.now() / 1000);
@@ -221,11 +225,18 @@ export async function createCommunityReferralLink(
   const existing = await links.getReferralLinkByUser(communityId, String(identity.userId));
   if (existing) return existingLinkResult(communityId, existing, origin);
 
-  const payout = normalizeTonAddress(payoutAccount);
-  if (!payout) return { ok: false, message: "Enter a TON payout address (EQ… / UQ… or 0:…)." };
+  const proven = verifyPayoutWalletProof(proof, {
+    purpose: PAYOUT_PROOF_COMMUNITY,
+    communityId,
+    telegramUserId: String(identity.userId),
+    nowSeconds: Math.floor(channelDeps.now() / 1000),
+  });
+  if (!proven.ok) return { ok: false, message: proven.message };
+  const payout = normalizeTonAddress(proven.address);
+  if (!payout) return { ok: false, message: "This wallet proof is not valid. No link was created." };
   const status = await channelDeps.accountStatus(payout);
-  if (status === "missing") return { ok: false, message: "That TON address is invalid. No payment was sent." };
-  if (status === "unknown") return { ok: false, message: "The TON address could not be confirmed. No payment was sent." };
+  if (status === "missing") return { ok: false, message: "That wallet cannot receive payments. No link was created." };
+  if (status === "unknown") return { ok: false, message: "The wallet could not be confirmed. No link was created." };
 
   let recorded: "inserted" | "exists" | "code_taken" = "code_taken";
   let code = "";
@@ -293,8 +304,10 @@ export async function resolveCommunityReferrerPayout(
   communityId: number,
   payerWallet?: string,
 ): Promise<CommunitySettlement> {
-  const finish = (result: CommunitySettlement): CommunitySettlement => {
+  const finish = async (result: CommunitySettlement): Promise<CommunitySettlement> => {
     if (payerWallet === undefined || !result.ok) return result;
+    const current = await requireCurrentRegistry();
+    if (!current.ok) return { ok: false, message: current.message };
     const subscriber = normalizeTonAddress(payerWallet);
     if (!subscriber) return { ok: false, message: "Connect your TON wallet before paying." };
     const validUntil = Math.floor(channelDeps.now() / 1000) + COMMUNITY_REFERRAL_AUTHORIZATION_TTL_SECONDS;
@@ -312,11 +325,11 @@ export async function resolveCommunityReferrerPayout(
     };
   };
   const identity = validateInitData(initData, channelDeps.botToken, channelDeps.now() / 1000);
-  if (!identity) return finish({ ok: false, message: "Open PassGram from Telegram so your account can be confirmed." });
+  if (!identity) return await finish({ ok: false, message: "Open PassGram from Telegram so your account can be confirmed." });
   const community = await channelDeps.repo.getChannelByCommunityId(communityId);
-  if (!community?.active) return finish({ ok: false, message: "This community is unavailable." });
+  if (!community?.active) return await finish({ ok: false, message: "This community is unavailable." });
   if (community.paused) {
-    return finish({
+    return await finish({
       ok: true,
       message: "This community is deactivated.",
       communityReferrerPayout: null,
@@ -325,7 +338,7 @@ export async function resolveCommunityReferrerPayout(
   }
   const attribution = await communityRepo.getAttribution(communityId, String(identity.userId));
   if (!attribution) {
-    return finish({
+    return await finish({
       ok: true,
       message: "No community referral attribution.",
       communityReferrerPayout: null,
@@ -335,16 +348,16 @@ export async function resolveCommunityReferrerPayout(
   // A stopped program keeps paying the rate locked on this attribution.
   const lockedBps = attribution.referralPercentBps > 0 ? attribution.referralPercentBps : community.referralPercentBps;
   if (lockedBps <= 0) {
-    return finish({ ok: true, message: "No community referral on this community.", communityReferrerPayout: null, referralPercentBps: 0 });
+    return await finish({ ok: true, message: "No community referral on this community.", communityReferrerPayout: null, referralPercentBps: 0 });
   }
   const link = await communityRepo.getReferralLinkByUser(communityId, attribution.referrerTelegramUserId);
   if (!link?.payoutAccount) {
-    return finish({ ok: true, message: "Community referrer has no payout address.", communityReferrerPayout: null, referralPercentBps: lockedBps });
+    return await finish({ ok: true, message: "Community referrer has no payout address.", communityReferrerPayout: null, referralPercentBps: lockedBps });
   }
   if (link.referrerTelegramUserId === community.ownerTelegramUserId) {
-    return finish({ ok: true, message: "Owner cannot be community referrer.", communityReferrerPayout: null, referralPercentBps: lockedBps });
+    return await finish({ ok: true, message: "Owner cannot be community referrer.", communityReferrerPayout: null, referralPercentBps: lockedBps });
   }
-  return finish({
+  return await finish({
     ok: true,
     message: "Community referrer ready for on-chain split.",
     communityReferrerPayout: link.payoutAccount,

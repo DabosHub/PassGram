@@ -18,11 +18,11 @@ import {
   PassGramRegistry,
   storeRegisterCommunity,
   storeSetCommunityReferral,
-  storeSetUsdtJettonWallet,
+  storeDiscoverUsdtJettonWallet,
   storeJettonTransferNotification,
   type RegisterCommunity,
   type SetCommunityReferral,
-  type SetUsdtJettonWallet,
+  type DiscoverUsdtJettonWallet,
   type JettonTransferNotification,
 } from "../build/PassGramRegistry_PassGramRegistry.js";
 
@@ -327,17 +327,17 @@ async function main() {
     }
   }
 
-  // ── SetUsdtJettonWallet idempotent rebind ────────────────
+  // ── DiscoverUsdtJettonWallet does not replace a bound wallet ─
   {
-    const name = "SetUsdtJettonWallet (rebind same)";
+    const name = "DiscoverUsdtJettonWallet (already bound)";
     try {
       const current = await withRetry("usdtWallet", () => registry.getUsdtJettonWallet());
       if (!current) {
         fail(name, "wallet is null");
       } else {
-        const msg: SetUsdtJettonWallet = {
-          $$type: "SetUsdtJettonWallet",
-          wallet: current,
+        const msg: DiscoverUsdtJettonWallet = {
+          $$type: "DiscoverUsdtJettonWallet",
+          queryId: 0n,
         };
         let seqno = await withRetry("seqno", () => walletContract.getSeqno());
         await withRetry("rebind", () =>
@@ -347,8 +347,8 @@ async function main() {
             messages: [
               internal({
                 to: registryAddr,
-                value: toNano("0.05"),
-                body: beginCell().store(storeSetUsdtJettonWallet(msg)).endCell(),
+                value: toNano("0.1"),
+                body: beginCell().store(storeDiscoverUsdtJettonWallet(msg)).endCell(),
                 bounce: true,
               }),
             ],

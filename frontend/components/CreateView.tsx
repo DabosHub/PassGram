@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   channelStateMessage,
   communityFormReady,
-  tonAddressKind,
   ownershipVerified,
   parseDurationDays,
   parseCommunityPrice,
@@ -65,7 +64,6 @@ export function CreateView() {
   const [photoUrl, setPhotoUrl] = useState("");
   const [price, setPrice] = useState("");
   const [duration, setDuration] = useState("");
-  const [payout, setPayout] = useState(store.user.payoutAddress);
   const [formMessage, setFormMessage] = useState("");
   const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -91,7 +89,6 @@ export function CreateView() {
     setRequestId(snap.requestId);
     setPrice(snap.price);
     setDuration(snap.duration);
-    setPayout(snap.payout || store.user.payoutAddress);
     setCreated(snap.created);
     setShareOpen(snap.shareOpen);
     setSafetyOpen(snap.safetyOpen);
@@ -99,7 +96,7 @@ export function CreateView() {
     setFormMessage(snap.created ? "Community created." : "");
     setFormError("");
     setBusy(false);
-  }, [lab.createSnapshot, store.user.payoutAddress]);
+  }, [lab.createSnapshot]);
 
   // While waiting for the owner to add PassGramBot, poll access so the Added badge flips without a manual tap.
   useEffect(() => {
@@ -157,11 +154,10 @@ export function CreateView() {
 
   const durationDays = parseDurationDays(duration);
   const ready =
-    communityFormReady({ channelState, botAdded, price, durationDays, payout }) && !busy && !created;
+    communityFormReady({ channelState, botAdded, price, durationDays }) && !busy && !created;
   const priceError = price.trim() && !parseCommunityPrice(price) ? "Enter at least 1 USDT, with up to 6 decimal places." : "";
   const durationError =
     duration.trim() && durationDays == null ? "Enter a whole number of days from 1 to 366." : "";
-  const payoutError = payout.trim() && !tonAddressKind(payout) ? "Enter a TON address (EQ… / UQ… or 0:…)." : "";
 
   function applyChannel(result: ChannelResponse) {
     const state = result.state || "verification_failed";
@@ -332,10 +328,22 @@ export function CreateView() {
     setFormError("");
     setFormMessage("");
     try {
+      if (!getConnectedTonAddress()) {
+        const account = await store.connectWallet();
+        if (!account) {
+          setFormError("Connect your TON wallet. Subscription payments are sent to that wallet.");
+          return;
+        }
+      }
+      const creatorWallet = getConnectedTonAddress();
+      if (!creatorWallet) {
+        setFormError("Connect your TON wallet. Subscription payments are sent to that wallet.");
+        return;
+      }
       const response = await fetch("/api/telegram/communities", {
         method: "POST",
         headers: { ...telegramHeaders(), "content-type": "application/json" },
-        body: JSON.stringify({ requestId, price, durationDays, payoutAccount: payout }),
+        body: JSON.stringify({ requestId, price, durationDays, creatorWallet }),
       });
       const result = (await response.json()) as ChannelResponse;
       if (!result.ok) {
@@ -356,16 +364,9 @@ export function CreateView() {
           ownerTelegramUserId: String(
             result.channel?.ownerTelegramUserId || store.user.telegramUserId || "",
           ),
-          payoutAddress: payout,
+          payoutAddress: creatorWallet,
         });
-        if (!getConnectedTonAddress()) {
-          const account = await store.connectWallet();
-          if (!account) {
-            setFormError("Connect your TON wallet and sign RegisterCommunity. Payment cannot start until your wallet registers this community.");
-            return;
-          }
-        }
-        const creator = getConnectedTonAddress();
+        const creator = creatorWallet;
         if (!creator || !contractIsConfigured()) {
           setFormError("The registry contract is not configured, so RegisterCommunity was not signed.");
           return;
@@ -411,7 +412,7 @@ export function CreateView() {
         setShareOpen(true);
       }
       setCreated(true);
-      setFormMessage("Community saved. Your wallet submitted RegisterCommunity. You are the creator on the contract.");
+      setFormMessage("Community saved. Your wallet submitted RegisterCommunity. Subscription payments are sent to that wallet.");
     } catch {
       setFormError("No community was created.");
     } finally {
@@ -562,14 +563,12 @@ export function CreateView() {
         hint="Each subscriber's access ends this many days after their own confirmed payment."
       />
 
-      <Field
-        label="Creator TON payout address"
-        value={payout}
-        onChange={setPayout}
-        placeholder="EQ…"
-        error={payoutError}
-        hint="Friendly EQ/UQ address or raw 0: form. Checking it does not send a payment."
-      />
+      <section className="rounded-2xl border border-[var(--pg-line)] bg-[var(--pg-bg)] px-3 py-3" aria-label="Receiving wallet">
+        <p className="text-[13px] font-medium">Receiving wallet</p>
+        <p className="mt-1 text-xs leading-relaxed text-[var(--pg-hint)]">
+          Subscription payments are sent to the wallet that signs RegisterCommunity. That wallet is the receiving wallet, and a later price or duration change does not replace it.
+        </p>
+      </section>
 
       <section className="rounded-2xl border border-[var(--pg-line)] bg-[var(--pg-bg)] px-3 py-3" aria-label="Invite links">
         <p className="text-[13px] font-medium">Invite links</p>
@@ -585,7 +584,7 @@ export function CreateView() {
         {busy ? "Opening wallet" : "Create community"}
       </button>
       <p className="text-center text-xs text-[var(--pg-hint)]">
-        Your wallet signs RegisterCommunity. That wallet address is stored as the creator.
+        Your wallet signs RegisterCommunity. Subscription payments are sent to that wallet.
       </p>
       {!botAdded && owned ? (
         <p className="text-center text-xs text-[var(--pg-hint)]">Create community unlocks after Verified and Added are both active.</p>

@@ -32,7 +32,7 @@ const day = 24 * 60 * 60 * 1000;
 function sign(userId: number, authDate = Math.floor(Date.now() / 1000)): string {
   const fields: Record<string, string> = { auth_date: String(authDate), user: JSON.stringify({ id: userId }) };
   const dataCheck = Object.entries(fields)
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     .map(([key, value]) => `${key}=${value}`)
     .join("\n");
   const secret = crypto.createHmac("sha256", "WebAppData").update(token).digest();
@@ -50,19 +50,19 @@ test("USDT prices stay integers and durations expire from the payment time", () 
   assert.equal(parseDurationDays("0"), null);
   assert.equal(parseDurationDays("367"), null);
   assert.equal(
-    communityFormReady({ channelState: "verified", botAdded: true, price: "1", durationDays: 45, payout: "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs" }),
+    communityFormReady({ channelState: "verified", botAdded: true, price: "1", durationDays: 45 }),
     true,
   );
   assert.equal(
-    communityFormReady({ channelState: "permission_missing", botAdded: true, price: "1", durationDays: 45, payout: "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs" }),
+    communityFormReady({ channelState: "permission_missing", botAdded: true, price: "1", durationDays: 45 }),
     true,
   );
   assert.equal(
-    communityFormReady({ channelState: "verified", botAdded: false, price: "1", durationDays: 45, payout: "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs" }),
+    communityFormReady({ channelState: "verified", botAdded: false, price: "1", durationDays: 45 }),
     false,
   );
   assert.equal(
-    communityFormReady({ channelState: "not_owner", botAdded: true, price: "1", durationDays: 7, payout: "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs" }),
+    communityFormReady({ channelState: "not_owner", botAdded: true, price: "1", durationDays: 7 }),
     false,
   );
 });
@@ -166,7 +166,7 @@ test("verification uses Telegram's chat, owner, and bot rights before a communit
     requestId: pendingBot.requestId || 0,
     price: "1.5",
     durationDays: 30,
-    payoutAccount: "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs",
+    creatorWallet: "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs",
   });
   assert.equal(blockedCreate.ok, false);
   assert.equal(blockedCreate.state, "permission_missing");
@@ -186,7 +186,7 @@ test("verification uses Telegram's chat, owner, and bot rights before a communit
     requestId: owned.requestId || 0,
     price: "1.5",
     durationDays: 30,
-    payoutAccount: "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs",
+    creatorWallet: "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs",
   });
   assert.equal(created.ok, true);
   assert.equal(created.channel?.telegramMemberCount, 12);
@@ -203,7 +203,7 @@ test("verification uses Telegram's chat, owner, and bot rights before a communit
     requestId: owned.requestId || 0,
     price: "9",
     durationDays: 7,
-    payoutAccount: "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs",
+    creatorWallet: "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs",
   });
   assert.equal(duplicate.alreadyExists, true);
   assert.equal((await repo.getChannel("-100123"))?.priceUsdt, parseCommunityPrice("1.5"));
@@ -214,7 +214,7 @@ test("verification uses Telegram's chat, owner, and bot rights before a communit
     requestId: owned.requestId || 0,
     price: "1",
     durationDays: 90,
-    payoutAccount: implicit,
+    creatorWallet: implicit,
   });
   assert.equal(accountsChecked, before);
 
@@ -228,7 +228,7 @@ test("verification uses Telegram's chat, owner, and bot rights before a communit
     requestId: owned.requestId || 0,
     price: "1.5",
     durationDays: 30,
-    payoutAccount: "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs",
+    creatorWallet: "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs",
   });
   assert.equal(restored.ok, true);
   mode.kind = "down";

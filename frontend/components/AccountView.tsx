@@ -293,7 +293,7 @@ function PoliciesPage() {
             "A payment below the listed price is returned in full and opens no access. A payment above the listed price is settled at that price, and the extra is returned.",
             "A payment to a deactivated community is returned in full. The community page stays open.",
             "A new price or duration applies to subscribers and renewals after that change is confirmed. A period already paid stays as purchased.",
-            "The creator sets the payout address when the community is registered, and can replace it from community settings. The wallet that registered the community signs that change. New subscriptions and renewals after confirmation pay the new address. Payments already sent stay where they were paid.",
+            "Subscription payments are sent to the wallet that registers the community. Later price and duration changes do not move that receiving wallet. Payments already sent stay where they were paid.",
             "Wallet actions can require a network fee on TON. That fee is separate from the USDT price.",
           ]}
         />
@@ -312,8 +312,8 @@ function PoliciesPage() {
             `That referrer earns ${fees.affiliateOfPaymentPercent}% of each confirmed subscription in the creator's communities. This is ${fees.affiliateOfFeePercent}% of the platform fee. The other ${platformRemainder}% stays with PassGram.`,
             `A community registered without a PassGram referrer keeps the full ${fees.platformPercent}% with PassGram.`,
             "The referrer is recorded the first time someone opens PassGram from that referral link, and that record stays with the account. Self-referral is rejected.",
-            "The referrer's payout address is stored when the creator registers the community. Later subscription payments use that stored address.",
-            "Creating the referral link is recorded by PassGram, with no wallet transaction and no network fee. The payout address is required then, and it stays the address recorded with that link.",
+            "The referrer's receiving wallet is the wallet they confirm when the referral link is created. Later subscription payments use that wallet.",
+            "Creating the referral link asks for a free wallet signature and does not send a transaction or charge a network fee. The confirmed wallet stays the one recorded with that link.",
           ]}
         />
         <PolicyBlock
@@ -326,7 +326,7 @@ function PoliciesPage() {
             "A later rate change applies to people who have not paid yet. People who already paid keep the rate from their first payment.",
             "Stopping the program closes new registrations, including older marketer links. Referrals already locked keep their original rate.",
             "Deactivating the community pauses the program with it and closes new payments, renewals, and new registrations. The saved price, duration, and rate stay in place. Activating again restores that same rate.",
-            "Creating a community referral link is recorded by PassGram, with no wallet transaction. The payout address is entered for that community alone, and it stays the address recorded with that link. It is separate from any PassGram referral payout.",
+            "Creating a community referral link asks for a free wallet signature and does not send a transaction. The confirmed wallet is stored for that community alone and stays the one recorded with that link. It is separate from any PassGram referral wallet.",
             "The creator receives no community commission on their own community. The subscriber receives no community commission on their own payment.",
             "One payment can include both a PassGram referral and a community referral. Each follows its own rule above.",
           ]}
@@ -335,8 +335,8 @@ function PoliciesPage() {
           title="Privacy"
           points={[
             "PassGram uses your Telegram identity from the Mini App to operate the account.",
-            "Your wallet signs community registration, subscription payments, and later updates that require the creator's or marketer's signature.",
-            "Payout addresses are stored when you create a community or a referral link. Settlement pays that address.",
+            "Your wallet signs community registration, subscription payments, and later updates. A marketer confirms the receiving wallet with a free signature when creating a referral link.",
+            "The receiving wallet is stored when you register a community or confirm a referral link. Settlement pays that wallet.",
             "Notification choices saved on this device stay on this device.",
             "PassGram asks for neither your seed phrase nor your private key.",
           ]}

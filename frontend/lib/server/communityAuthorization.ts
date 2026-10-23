@@ -4,6 +4,7 @@ import { buildCommunityAuthorizationCell, buildCommunityReferralAuthorizationCel
 import { validateInitData } from "./initData";
 import type { ChannelDeps } from "./channelFlow";
 import { OwnerKeyError, ownerSeedFromEnv, signAuthorizationHash } from "./ownerKey";
+import { requireCurrentRegistry } from "./registryCode";
 
 export type CommunityAuthorizationResult =
   | {
@@ -69,6 +70,8 @@ export async function authorizeCommunityRegistration(
   if (!registry || !isTonAddress(registry)) {
     return { ok: false, message: "The registry contract is not configured, so this community cannot be approved." };
   }
+  const current = await requireCurrentRegistry();
+  if (!current.ok) return { ok: false, message: current.message };
   let creatorAddress: Address;
   let registryAddress: Address;
   let payoutAddress: Address;
@@ -81,8 +84,11 @@ export async function authorizeCommunityRegistration(
   } catch {
     return { ok: false, message: "Connect your TON wallet before registering this community." };
   }
+  if (!creatorAddress.equals(payoutAddress)) {
+    return { ok: false, message: "Subscription payments go to the wallet that registers this community. Connect that wallet." };
+  }
   const signedCreator = creatorAddress.toString();
-  const signedPayout = payoutAddress.toString();
+  const signedPayout = signedCreator;
   const signedMarketer = marketerAddress ? marketerAddress.toString() : null;
   const cell = buildCommunityAuthorizationCell({
     registry: registryAddress.toString(),

@@ -1,6 +1,6 @@
 // PassGramRegistry — USDT Jetton receiver + on-chain fee / community-referral splitter.
 // Primary payment path: JettonTransferNotification from the registry's USDT jetton wallet.
-// Owner sets usdtJettonWallet after deploy (wallet of this contract for the USDT master).
+// The USDT master reports this contract's jetton wallet. The owner cannot paste that address.
 // Referral links are not stored here. No message writes a link or spends Gram to record one.
 
 import "@stdlib/deploy";
@@ -90,8 +90,41 @@ message(0x52464e44) PaymentRefunded {
     reason: Int as uint8;
 }
 
-message SetUsdtJettonWallet {
+/// opcode "USDW". The owner asks the configured USDT master for this contract's jetton wallet.
+message(0x55534457) DiscoverUsdtJettonWallet {
+    queryId: Int as uint64;
+}
+
+/// Jetton master request. opcode from the standard jetton minter.
+message(0x2c76b973) ProvideWalletAddress {
+    queryId: Int as uint64;
+    ownerAddress: Address;
+    includeAddress: Bool;
+}
+
+/// Jetton master reply. The wallet is stored only when this master sends it for this contract.
+message(0xd1735400) TakeWalletAddress {
+    queryId: Int as uint64;
+    walletAddress: Address;
+    ownerAddress: Address?;
+}
+
+/// opcode "WSET". The USDT jetton wallet for this contract is now fixed.
+message(0x57534554) UsdtJettonWalletSet {
     wallet: Address;
+}
+
+/// opcode "ROWK". Replaces the server key without redeploying the registry.
+/// The owner wallet must send it, and the current key must sign this contract, the new key, and an expiry.
+message(0x524f574b) RotateOwnerKey {
+    newKey: Int as uint256;
+    validUntil: Int as uint32;
+    authorization: Slice as bytes64;
+}
+
+/// opcode "OKRT". The server key changed. Later approvals must use the new key.
+message(0x4f4b5254) OwnerKeyRotated {
+    newKey: Int as uint256;
 }
 
 /// opcode "EXCS" — USDT above the subscription price was returned to the payer.
@@ -126,6 +159,7 @@ struct OutgoingPayout {
 }
 
 /// opcode "REGC" — community creator signs this with their own wallet.
+/// That same wallet receives the creator share. payout must equal creator.
 /// platformMarketer is the PassGram referrer's payout wallet, supplied from the database.
 /// It is stored as-is. Later payments pay it whenever it is present.
 /// authorization is the owner's 512-bit signature over every field this message stores.
@@ -141,15 +175,32 @@ message(0x52454743) RegisterCommunity {
     authorization: Slice as bytes64;
 }
 
-/// opcode "UPDC" — only the wallet that registered the community may change its terms.
-/// payout is the creator share wallet for subscriptions and renewals after this message.
+/// opcode "CREG". An indexer can read a new community without the Mini App database.
+message(0x43524547) CommunityRegistered {
+    communityId: Int as uint64;
+    creator: Address;
+    price: Int as coins;
+    durationSeconds: Int as uint32;
+    platformMarketer: Address?;
+    communityReferralBps: Int as uint16;
+    accessMode: Int as uint8;
+}
+
+/// opcode "CUPD". Price and duration changed. The receiving wallet stays the registering wallet.
+message(0x43555044) CommunityUpdated {
+    communityId: Int as uint64;
+    price: Int as coins;
+    durationSeconds: Int as uint32;
+}
+
+/// opcode "UPDC" — only the wallet that registered the community may change its price and duration.
+/// The creator share keeps going to that registering wallet.
 /// Payments already settled stay in the wallet that received them.
 message(0x55504443) UpdateCommunity {
     queryId: Int as uint64;
     communityId: Int as uint64;
     price: Int as coins;
     durationSeconds: Int as uint32;
-    payout: Address;
 }
 
 /// opcode "SCRF" — matches frontend/lib/ton/registry.ts
@@ -193,8 +244,8 @@ contract PassGramRegistry with Deployable {
     affiliateShareOfPlatformBps: Int as uint16;
     maxCommunityReferralBps: Int as uint16;
     usdtJettonMaster: Address;
-    /// Ed25519 public key of the owner. RegisterCommunity is accepted only when this key
-    /// signed every field stored for that community on this contract.
+    /// Ed25519 public key of the server. RegisterCommunity and payment approvals use this key.
+    /// RotateOwnerKey replaces it. A leaked key cannot replace itself without the owner wallet.
     ownerPublicKey: Int as uint256;
     /// Jetton wallet owned by THIS contract for usdtJettonMaster. Set by owner after deploy.
     usdtJettonWallet: Address?;
@@ -225,14 +276,51 @@ contract PassGramRegistry with Deployable {
         self.payouts = emptyMap();
     }
 
-    receive(msg: SetUsdtJettonWallet) {
+    receive(msg: DiscoverUsdtJettonWallet) {
         require(sender() == self.owner, "Owner only");
         require(self.usdtJettonWallet == null, "USDT wallet already set");
-        self.usdtJettonWallet = msg.wallet;
+        send(SendParameters{
+            to: self.usdtJettonMaster,
+            value: ton("0.05"),
+            bounce: true,
+            body: ProvideWalletAddress{
+                queryId: msg.queryId,
+                ownerAddress: myAddress(),
+                includeAddress: true,
+            }.toCell(),
+        });
+    }
+
+    receive(msg: TakeWalletAddress) {
+        // The master is the source of the address. A pasted wallet, or a reply about another owner, is rejected.
+        require(sender() == self.usdtJettonMaster, "Not USDT master");
+        require(self.usdtJettonWallet == null, "USDT wallet already set");
+        require(msg.ownerAddress != null && msg.ownerAddress!! == myAddress(), "Not this contract");
+        self.usdtJettonWallet = msg.walletAddress;
+        emit(UsdtJettonWalletSet{ wallet: msg.walletAddress }.toCell());
+    }
+
+    receive(msg: RotateOwnerKey) {
+        // The owner address and the current server key must both agree. A copied server secret
+        // cannot submit this alone, and the owner wallet cannot choose a key the server did not sign.
+        require(sender() == self.owner, "Owner only");
+        require(msg.newKey != 0 && msg.newKey != self.ownerPublicKey, "Owner key required");
+        require(now() <= msg.validUntil && msg.validUntil <= now() + 86400, "Owner approval required");
+        let approved: Cell = beginCell()
+            .storeUint(0x524f574b, 32)
+            .storeAddress(myAddress())
+            .storeUint(msg.newKey, 256)
+            .storeUint(msg.validUntil, 32)
+            .endCell();
+        require(checkSignature(approved.hash(), msg.authorization, self.ownerPublicKey), "Owner approval required");
+        self.ownerPublicKey = msg.newKey;
+        emit(OwnerKeyRotated{ newKey: msg.newKey }.toCell());
     }
 
     receive(msg: JettonExcesses) {
-        // The jetton wallet accepted this share. Keep the returned Gram and clear the record.
+        // Only this contract's USDT wallet may clear a share. Anyone else could delete a bounced payout.
+        require(self.usdtJettonWallet != null, "USDT wallet unset");
+        require(sender() == self.usdtJettonWallet!!, "Not USDT wallet");
         self.payouts.del(msg.queryId);
         self.retryBouncedPayouts(0);
     }
@@ -262,6 +350,7 @@ contract PassGramRegistry with Deployable {
             .endCell();
         require(checkSignature(approved.hash(), msg.authorization, self.ownerPublicKey), "Owner approval required");
         require(sender() == msg.creator, "Creator must sign");
+        require(msg.payout == msg.creator, "Payout is the creator wallet");
         require(self.communities.get(msg.communityId) == null, "Community exists");
         require(msg.accessMode == 0, "Token gating is not enabled");
         require(msg.communityReferralBps <= self.maxCommunityReferralBps, "Referral bps too high");
@@ -282,6 +371,15 @@ contract PassGramRegistry with Deployable {
             paused: false,
         };
         self.communities.set(msg.communityId, cfg);
+        emit(CommunityRegistered{
+            communityId: msg.communityId,
+            creator: sender(),
+            price: msg.price,
+            durationSeconds: msg.durationSeconds,
+            platformMarketer: platformPayout,
+            communityReferralBps: msg.communityReferralBps,
+            accessMode: msg.accessMode,
+        }.toCell());
     }
 
     receive(msg: UpdateCommunity) {
@@ -294,8 +392,12 @@ contract PassGramRegistry with Deployable {
         require(msg.durationSeconds >= 86400 && msg.durationSeconds <= 31622400, "Bad duration");
         community.price = msg.price;
         community.durationSeconds = msg.durationSeconds;
-        community.payout = msg.payout;
         self.communities.set(msg.communityId, community);
+        emit(CommunityUpdated{
+            communityId: msg.communityId,
+            price: msg.price,
+            durationSeconds: msg.durationSeconds,
+        }.toCell());
     }
 
     receive(msg: SetCommunityReferral) {
@@ -446,6 +548,10 @@ contract PassGramRegistry with Deployable {
     /// The jetton wallet returned this transfer. The USDT is still in its balance, so the share stays queued.
     bounced(msg: bounced<JettonTransfer>) {
         self.queueBouncedPayout(msg.queryId);
+    }
+
+    get fun ownerPublicKey(): Int {
+        return self.ownerPublicKey;
     }
 
     get fun platformFeeBps(): Int {

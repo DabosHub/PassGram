@@ -6,7 +6,7 @@ export const OP_SET_COMMUNITY_REFERRAL = 0x53435246;
 export const OP_SUBSCRIBE = 0x53554253;
 /** opcode "REGC" — creator wallet registers the community. */
 export const OP_REGISTER_COMMUNITY = 0x52454743;
-/** opcode "UPDC" — creator wallet updates subscription price and duration. */
+/** opcode "UPDC" — creator wallet updates subscription price and duration. The receiving wallet stays the registering wallet. */
 export const OP_UPDATE_COMMUNITY = 0x55504443;
 /** opcode "SCPS" — creator wallet pauses or resumes the community. */
 export const OP_SET_COMMUNITY_PAUSED = 0x53435053;
@@ -51,13 +51,12 @@ export function buildRegisterCommunityBody(input: {
 
 /**
  * UpdateCommunity body. Only the wallet that registered the community can send it.
- * payout receives that creator's share on later subscriptions and renewals.
+ * Price and duration change. The receiving wallet stays that registering wallet.
  */
 export function buildUpdateCommunityBody(input: {
   communityId: number;
   price: string;
   durationSeconds: number;
-  payout: string;
 }): string {
   const cell = beginCell()
     .storeUint(OP_UPDATE_COMMUNITY, 32)
@@ -65,7 +64,6 @@ export function buildUpdateCommunityBody(input: {
     .storeUint(input.communityId, 64)
     .storeCoins(BigInt(input.price))
     .storeUint(input.durationSeconds, 32)
-    .storeAddress(Address.parse(input.payout))
     .endCell();
   return cell.toBoc().toString("base64");
 }

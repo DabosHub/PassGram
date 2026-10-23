@@ -1,36 +1,76 @@
 import { isInsideChannel } from "./channelMember.ts";
 import { loadConfig } from "./config.ts";
-import { communityChatId, communityReferralConversion, createPool, storeInviteLink, storeMembershipInvite, telegramUserIdForTonWallet, upsertPaymentAndSubscription } from "./db.ts";
+import { applyCommunityTerms, communityChatId, communityReferralConversion, createPool, platformReferrerPayout, readIndexerState, saveIndexerCursor, saveIndexerScan, storeInviteLink, storeMembershipInvite, telegramUserIdForTonWallet, upsertPaymentAndSubscription } from "./db.ts";
+import { createShutdown, sleep } from "./lifecycle.ts";
+import { sanitizeError } from "./log.ts";
 import { notifyCommunityReferralPaid } from "./referralNotice.ts";
 import { createTelegramClient } from "./telegram.ts";
-import { fetchRegistryTransactions, parseSubscriptionHint } from "./tonApi.ts";
+import { fetchRegistryTransactionPage, parseCommunityUpdated, parseSubscriptionHint, subscriptionExpiryMs, walkRegistryTransactions } from "./tonApi.ts";
+import { liveRegistryMatches, PASSGRAM_REGISTRY_CODE_HASH, REGISTRY_CODE_MISMATCH } from "./registryCode.ts";
+import type { Pool } from "pg";
 
-const seen = new Set<string>();
-
-export async function runIndexerOnce(): Promise<number> {
+export async function runIndexerOnce(sharedPool?: Pool): Promise<number> {
   const config = loadConfig();
-  const pool = createPool(config.databaseUrl);
+  const pool = sharedPool ?? createPool(config.databaseUrl);
   const telegram = createTelegramClient(config.telegramBotToken);
   try {
-    const txs = await fetchRegistryTransactions({
+    if (config.registryCodeHash !== PASSGRAM_REGISTRY_CODE_HASH) {
+      throw new Error("PASSGRAM_REGISTRY_CODE_HASH must match this source. Use the hash printed by the deploy script.");
+    }
+    const current = await liveRegistryMatches({
       apiUrl: config.tonApiUrl,
       apiKey: config.tonApiKey,
       address: config.registryAddress,
+      expectedHash: PASSGRAM_REGISTRY_CODE_HASH,
     });
+    if (!current) throw new Error(REGISTRY_CODE_MISMATCH);
+    const state = await readIndexerState(pool);
+    const walked = await walkRegistryTransactions({
+      cursorLt: state.lastProcessedLt,
+      resume: state.scanLt && state.scanHash ? { lt: state.scanLt, hash: state.scanHash } : null,
+      loadPage: (query) =>
+        fetchRegistryTransactionPage({
+          apiUrl: config.tonApiUrl,
+          apiKey: config.tonApiKey,
+          address: config.registryAddress,
+          ...query,
+        }),
+    });
+    if (!walked.done) {
+      if (walked.resume) await saveIndexerScan(pool, state.lastProcessedLt, walked.resume);
+      return 0;
+    }
+    const seen = new Set<string>();
     let handled = 0;
-    for (const tx of txs) {
-      if (seen.has(tx.txHash)) continue;
+    for (const tx of walked.events) {
+      const eventKey = `${tx.txHash}:${tx.bodyBase64 ?? ""}`;
+      if (seen.has(eventKey)) continue;
+      const updated = parseCommunityUpdated(tx.bodyBase64);
+      if (updated) {
+        const applied = await applyCommunityTerms(pool, updated);
+        if (!applied) console.warn("community update matched no listing", updated.communityId);
+        seen.add(eventKey);
+        handled += 1;
+        continue;
+      }
       const hint = parseSubscriptionHint(tx.bodyBase64);
       if (!hint) {
-        seen.add(tx.txHash);
+        seen.add(eventKey);
         continue;
       }
       const paidAtMs = hint.paidAt
         ? hint.paidAt * 1000
         : (tx.utime || Math.floor(Date.now() / 1000)) * 1000;
-      const expiresAtMs = hint.expiresAt
-        ? hint.expiresAt * 1000
-        : paidAtMs + 30 * 24 * 60 * 60 * 1000;
+      const expiresAtMs = subscriptionExpiryMs(hint.expiresAt);
+      if (expiresAtMs == null) {
+        console.warn("subscription event has no expiry", tx.txHash);
+        seen.add(eventKey);
+        continue;
+      }
+      const telegramUserId = await telegramUserIdForTonWallet(pool, hint.subscriber || "");
+      const referrer = hint.hasPlatformReferrer && telegramUserId
+        ? await platformReferrerPayout(pool, telegramUserId)
+        : null;
       const event = {
         txHash: tx.txHash.replace(/:out$/, ""),
         subscriber: hint.subscriber || "unknown",
@@ -39,11 +79,11 @@ export async function runIndexerOnce(): Promise<number> {
         amount: hint.amount,
         paidAtMs,
         expiresAtMs,
-        referrer: hint.hasReferrer ? "referrer" : null,
+        referrer,
+        hasPlatformReferrer: hint.hasPlatformReferrer,
       };
-      const telegramUserId = await telegramUserIdForTonWallet(pool, event.subscriber);
       const { paymentId, inviteNeeded } = await upsertPaymentAndSubscription(pool, { ...event, telegramUserId });
-      seen.add(tx.txHash);
+      seen.add(eventKey);
       handled += 1;
       if (inviteNeeded && telegramUserId) {
         try {
@@ -55,7 +95,7 @@ export async function runIndexerOnce(): Promise<number> {
             send: (userId, text, button) => telegram.sendDirectMessage(userId, text, button),
           });
         } catch (error) {
-          console.error("referral conversion notice failed", error);
+          console.error("referral conversion notice failed", sanitizeError(error));
         }
       }
       if (inviteNeeded) {
@@ -76,23 +116,32 @@ export async function runIndexerOnce(): Promise<number> {
         }
       }
     }
+    if (BigInt(walked.maxLt) > BigInt(state.lastProcessedLt)) {
+      await saveIndexerCursor(pool, walked.maxLt);
+    }
     return handled;
   } finally {
-    await pool.end();
+    if (!sharedPool) await pool.end();
   }
 }
 
 async function main() {
   const config = loadConfig();
+  const pool = createPool(config.databaseUrl);
+  const shutdown = createShutdown();
   console.log("PassGram indexer watching", config.registryAddress);
-  for (;;) {
-    try {
-      const n = await runIndexerOnce();
-      if (n > 0) console.log("indexed", n, "payments");
-    } catch (error) {
-      console.error("indexer tick failed", error);
+  try {
+    while (!shutdown.signal.aborted) {
+      try {
+        const n = await runIndexerOnce(pool);
+        if (n > 0) console.log("indexed", n, "payments");
+      } catch (error) {
+        console.error("indexer tick failed", sanitizeError(error));
+      }
+      await sleep(config.pollIntervalMs, shutdown.signal);
     }
-    await new Promise((r) => setTimeout(r, config.pollIntervalMs));
+  } finally {
+    await pool.end();
   }
 }
 

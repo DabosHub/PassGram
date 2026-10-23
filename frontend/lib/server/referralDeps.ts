@@ -13,6 +13,7 @@ export async function buildReferralDeps(): Promise<ReferralDeps> {
     repo,
     botToken,
     now: () => Date.now(),
-    accountStatus: async (accountId) => (isTonAddress(accountId) ? "exists" : "missing"),
+    // Same rule as community creation: a valid address is payable before the account is deployed.
+    accountStatus: async (accountId) => (isTonAddress(accountId) ? "implicit" : "missing"),
   };
 }

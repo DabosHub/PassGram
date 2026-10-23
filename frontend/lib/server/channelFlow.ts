@@ -11,7 +11,6 @@ import {
   readChatShared,
   readMyChatMember,
   subscriptionFulfillmentAllowed,
-  tonAddressKind,
   type ChannelSnapshot,
   type ChannelUiState,
 } from "../channelPolicy";
@@ -28,6 +27,7 @@ import { formatCommunityReferralPercent, parseCommunityReferralBps } from "../mo
 import { normalizeTonAddress } from "../ton/config";
 import type { ChannelRepository } from "./channelRepository";
 import { validateInitData } from "./initData";
+import { tonWalletKey } from "../ton/walletKey";
 import { downloadTelegramFile, TelegramApiError, type TelegramClient } from "./telegramClient";
 
 export type ChannelDeps = {
@@ -297,20 +297,19 @@ export async function readChannelSelection(deps: ChannelDeps, initData: string, 
 export async function createVerifiedCommunity(
   deps: ChannelDeps,
   initData: string,
-  input: { requestId: number; price: string; durationDays: unknown; payoutAccount: string },
+  input: { requestId: number; price: string; durationDays: unknown; creatorWallet: string },
 ): Promise<ChannelResult> {
   const identity = validateInitData(initData, deps.botToken, deps.now() / 1000);
   if (!identity) return fail("verification_failed", "Open PassGram from Telegram so your account can be confirmed.");
   const priceUsdt = parseCommunityPrice(input.price);
   const durationDays = parseDurationDays(input.durationDays);
-  const payout = normalizeTonAddress(input.payoutAccount);
-  const kind = tonAddressKind(input.payoutAccount);
-  if (!priceUsdt || !durationDays || !payout || !kind) {
-    return fail("verification_failed", "Enter a valid USDT price, duration, and TON payout address.");
+  const payout = normalizeTonAddress(input.creatorWallet);
+  if (!priceUsdt || !durationDays || !payout) {
+    return fail("verification_failed", "Enter a valid USDT price and duration, and connect the wallet that will receive payments.");
   }
   const account = await deps.accountStatus(payout);
-  if (account === "missing") return fail("verification_failed", "That TON address is invalid. No payment was sent.");
-  if (account === "unknown") return fail("verification_failed", "The TON address could not be confirmed. No payment was sent.");
+  if (account === "missing") return fail("verification_failed", "That wallet cannot receive payments. No community was created.");
+  if (account === "unknown") return fail("verification_failed", "The wallet could not be confirmed. No community was created.");
   const selection = await deps.repo.getSelection(input.requestId);
   if (
     !selection ||
@@ -361,6 +360,13 @@ export async function createVerifiedCommunity(
     payoutAccount: payout,
   });
   if (activated.result === "conflict") return fail("verification_failed", "This channel is already registered to another PassGram community.");
+  if (activated.result === "exists" && activated.row?.payoutAccount) {
+    const stored = tonWalletKey(activated.row.payoutAccount);
+    const next = tonWalletKey(payout);
+    if (stored && next && stored !== next) {
+      return fail("verification_failed", "This community receives payments at the wallet that registered it. Connect that wallet.");
+    }
+  }
   if (activated.result === "not_verified" || activated.result === "missing" || !activated.row) {
     return fail("verification_failed", "This channel is not verified, so no community was created.");
   }
@@ -762,7 +768,7 @@ export async function listReferralEnabledCommunities(
 export async function updateCommunityOffer(
   deps: ChannelDeps,
   initData: string,
-  input: { communityId: number; price: string; durationDays: unknown; payoutAccount: string },
+  input: { communityId: number; price: string; durationDays: unknown },
 ): Promise<{ ok: boolean; message: string }> {
   const identity = validateInitData(initData, deps.botToken, deps.now() / 1000);
   if (!identity) return { ok: false, message: "Open PassGram from Telegram so your account can be confirmed." };
@@ -781,12 +787,10 @@ export async function updateCommunityOffer(
   if (row.paused) {
     return { ok: false, message: "Activate the community before changing the subscription." };
   }
-  const payoutAccount = normalizeTonAddress(input.payoutAccount);
-  if (!payoutAccount) {
-    return { ok: false, message: "Enter a TON address (EQ… / UQ… or 0:…)." };
-  }
-  await deps.repo.saveChannel({ ...row, priceUsdt, durationDays, payoutAccount });
-  return { ok: true, message: "Subscription price, duration, and payout address saved." };
+  return {
+    ok: false,
+    message: "The listed price and duration change when the network confirms this update. Subscribers keep the current terms until then.",
+  };
 }
 
 export async function updateCommunityReferralSettings(

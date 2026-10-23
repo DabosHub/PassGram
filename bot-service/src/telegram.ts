@@ -1,9 +1,29 @@
+import { fetchWithTimeout } from "./http.ts";
+import { sanitizeError } from "./log.ts";
+
 export type TelegramClient = {
   createChatInviteLink: (chatId: string, expireDateUnix?: number) => Promise<string | null>;
   kickThenUnban: (chatId: string, userId: string) => Promise<boolean>;
   sendDirectMessage: (userId: string, text: string, button?: { text: string; url: string }) => Promise<{ ok: boolean; permanent: boolean }>;
   chatMember: (chatId: string, userId: string) => Promise<{ status?: string; is_member?: boolean } | null>;
 };
+
+/** Pauses between unban attempts. The member stays banned until one succeeds. */
+export const UNBAN_RETRY_MS = [0, 1_000, 5_000] as const;
+
+export async function unbanAfterKick(
+  unban: () => Promise<boolean>,
+  chatId: string,
+  userId: string,
+  delays: readonly number[] = UNBAN_RETRY_MS,
+  wait: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<void> {
+  for (const delay of delays) {
+    if (delay > 0) await wait(delay);
+    if (await unban()) return;
+  }
+  throw new Error(`Telegram unban failed for ${userId} in ${chatId}.`);
+}
 
 /** Body sent to Telegram createChatInviteLink. No monthly-fee or Stars fields exist on this method. */
 export function chatInviteLinkBody(chatId: string, expireDateUnix?: number): Record<string, unknown> {
@@ -23,14 +43,20 @@ export function createTelegramClient(botToken: string): TelegramClient {
     method: string,
     body: Record<string, unknown>,
   ): Promise<{ ok: true; description: string; result: unknown } | { ok: false; description: string; result: null }> {
-    const response = await fetch(`${base}/${method}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(`${base}/${method}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch {
+      console.error("telegram", method, "did not respond");
+      return { ok: false as const, description: "timed out", result: null };
+    }
     const json = (await response.json()) as { ok?: boolean; result?: unknown; description?: string };
     if (!json.ok) {
-      console.error("telegram", method, json.description || "failed");
+      console.error("telegram", method, sanitizeError(new Error(json.description || "failed")));
       return { ok: false as const, description: json.description || "failed", result: null };
     }
     return { ok: true as const, description: "", result: json.result };
@@ -45,7 +71,18 @@ export function createTelegramClient(botToken: string): TelegramClient {
     async kickThenUnban(chatId, userId) {
       const banned = await call("banChatMember", { chat_id: chatId, user_id: Number(userId) });
       if (!banned.ok) return false;
-      await call("unbanChatMember", { chat_id: chatId, user_id: Number(userId), only_if_banned: true });
+      await unbanAfterKick(
+        async () => {
+          const unbanned = await call("unbanChatMember", {
+            chat_id: chatId,
+            user_id: Number(userId),
+            only_if_banned: true,
+          });
+          return unbanned.ok;
+        },
+        chatId,
+        userId,
+      );
       return true;
     },
     async sendDirectMessage(userId, text, button) {

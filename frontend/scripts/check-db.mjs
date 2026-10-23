@@ -33,9 +33,12 @@ console.log(`HOST=${host}`);
 
 const require = createRequire(import.meta.url);
 const { Pool } = require("pg");
+const remote = /supabase|pooler\.|sslmode=require/i.test(url);
 const pool = new Pool({
   connectionString: url,
-  ssl: { rejectUnauthorized: false },
+  ssl: remote
+    ? { rejectUnauthorized: process.env.PASSGRAM_DATABASE_SSL_NO_VERIFY !== "1" }
+    : undefined,
   connectionTimeoutMillis: 15000,
 });
 

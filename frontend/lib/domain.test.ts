@@ -146,7 +146,7 @@ test("community form and blockers", () => {
     payoutAddress: "not valid",
     automationMode: "assisted",
   });
-  assert.ok(errors.name && errors.accessMode && errors.priceUsdt && errors.payoutAddress);
+  assert.ok(errors.name && errors.accessMode && errors.priceUsdt);
   const blockers = creationBlockers({
     contractConfigured: false,
     creatorConfirmed: false,

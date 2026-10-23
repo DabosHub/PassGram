@@ -1,5 +1,7 @@
 /**
- * Deploy PassGramRegistry to TON testnet, bind USDT jetton wallet, fund gas.
+ * Deploy the current PassGramRegistry source.
+ * DEPLOY_NETWORK=mainnet also requires PASSGRAM_DEPLOY_MAINNET=1.
+ * The built code must match contract/registry.codehash, which is the only code the app accepts.
  *
  * Required env (contract/.env or repo root .env.local):
  *   DEPLOYER_MNEMONIC="word1 word2 ... word24"
@@ -14,7 +16,8 @@ import { config as loadEnv } from "dotenv";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mnemonicToPrivateKey } from "@ton/crypto";
-import { Address, beginCell, toNano, SendMode, type TupleItem } from "@ton/core";
+import { readFileSync } from "node:fs";
+import { Address, beginCell, Cell, toNano, SendMode, type TupleItem } from "@ton/core";
 import {
   TonClient,
   WalletContractV3R2,
@@ -25,9 +28,9 @@ import {
 import {
   PassGramRegistry,
   storeDeploy,
-  storeSetUsdtJettonWallet,
+  storeDiscoverUsdtJettonWallet,
   type Deploy,
-  type SetUsdtJettonWallet,
+  type DiscoverUsdtJettonWallet,
 } from "../build/PassGramRegistry_PassGramRegistry.js";
 
 type DeployWallet = WalletContractV5R1 | WalletContractV4 | WalletContractV3R2;
@@ -91,6 +94,8 @@ loadEnv({ path: resolve(__dirname, "../../.env.local") });
 
 /** Canonical testnet USDT (USDTTT) jetton master. */
 const DEFAULT_TESTNET_USDT = "kQD0GKBM8ZbryVk2aESmzfU6b9b_8era_IkvBSELujFZPsyy";
+/** Canonical mainnet jUSDT jetton master. */
+const DEFAULT_MAINNET_USDT = "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs";
 
 async function resolveJettonWallet(
   client: TonClient,
@@ -117,17 +122,40 @@ async function main() {
     throw new Error("DEPLOYER_MNEMONIC looks invalid");
   }
 
-  const usdtMaster = Address.parse(
-    process.env.USDT_JETTON_MASTER?.trim() || DEFAULT_TESTNET_USDT,
-  );
+  const network = process.env.DEPLOY_NETWORK === "mainnet" ? "mainnet" : "testnet";
+  if (network === "mainnet" && process.env.PASSGRAM_DEPLOY_MAINNET !== "1") {
+    throw new Error("Refusing to deploy to mainnet. Set PASSGRAM_DEPLOY_MAINNET=1 to publish the current source.");
+  }
+  const builtCodeHash = Cell.fromBoc(
+    readFileSync(resolve(__dirname, "../build/PassGramRegistry_PassGramRegistry.code.boc")),
+  )[0]?.hash().toString("hex");
+  const acceptedCodeHash = readFileSync(resolve(__dirname, "../registry.codehash"), "utf8").trim().toLowerCase();
+  if (!builtCodeHash || builtCodeHash !== acceptedCodeHash) {
+    throw new Error("The built registry code does not match contract/registry.codehash. Rebuild, update that hash, and deploy this source only.");
+  }
+  const defaultUsdt = network === "mainnet" ? DEFAULT_MAINNET_USDT : DEFAULT_TESTNET_USDT;
+  const usdtMaster = Address.parse(process.env.USDT_JETTON_MASTER?.trim() || defaultUsdt);
+  if (network === "mainnet" && usdtMaster.equals(Address.parse(DEFAULT_TESTNET_USDT))) {
+    throw new Error("Mainnet deploy cannot use the testnet USDT master.");
+  }
+  if (network === "testnet" && usdtMaster.equals(Address.parse(DEFAULT_MAINNET_USDT))) {
+    throw new Error("Testnet deploy cannot use the mainnet USDT master.");
+  }
   const deployAmount = toNano(process.env.DEPLOY_TON_AMOUNT || "0.25");
   const gasReserve = toNano(process.env.GAS_RESERVE_TON || "2");
 
-  let endpoint =
-    process.env.TON_API_URL?.replace(/\/$/, "") ||
-    "https://testnet.toncenter.com/api/v2/jsonRPC";
+  const defaultEndpoint =
+    network === "mainnet" ? "https://toncenter.com/api/v2/jsonRPC" : "https://testnet.toncenter.com/api/v2/jsonRPC";
+  let endpoint = process.env.TON_API_URL?.replace(/\/$/, "") || defaultEndpoint;
   if (!endpoint.endsWith("/jsonRPC")) {
     endpoint = `${endpoint}/jsonRPC`;
+  }
+  const endpointIsTestnet = endpoint.includes("testnet");
+  if (network === "mainnet" && endpointIsTestnet) {
+    throw new Error("Mainnet deploy cannot use a testnet API URL.");
+  }
+  if (network === "testnet" && !endpointIsTestnet) {
+    throw new Error("Testnet deploy cannot use a mainnet API URL. Unset TON_API_URL or point it at testnet.");
   }
   const client = new TonClient({
     endpoint,
@@ -148,7 +176,8 @@ async function main() {
   }
   const treasury = Address.parse(treasuryRaw);
 
-  console.log("Network:     testnet");
+  console.log("Network:    ", network);
+  console.log("Code hash:  ", acceptedCodeHash);
   console.log("Owner:      ", deployer.toString());
   console.log("Treasury:   ", treasury.toString());
   console.log("USDT master:", usdtMaster.toString());
@@ -234,10 +263,10 @@ async function main() {
     );
   }
   if (!bound) {
-    console.log("Binding SetUsdtJettonWallet…");
-    const msg: SetUsdtJettonWallet = {
-      $$type: "SetUsdtJettonWallet",
-      wallet: jettonWallet,
+    console.log("Asking the USDT master for this contract's jetton wallet…");
+    const msg: DiscoverUsdtJettonWallet = {
+      $$type: "DiscoverUsdtJettonWallet",
+      queryId: 0n,
     };
     await withRetry("bindUsdt", () =>
       sendWalletTransfer(walletContract, wallet, {
@@ -246,25 +275,35 @@ async function main() {
         messages: [
           internal({
             to: registry.address,
-            value: toNano("0.05"),
-            body: beginCell().store(storeSetUsdtJettonWallet(msg)).endCell(),
+            value: toNano("0.1"),
+            body: beginCell().store(storeDiscoverUsdtJettonWallet(msg)).endCell(),
             bounce: true,
           }),
         ],
       }),
     );
     await waitSeqno(walletContract, seqno);
-    console.log("USDT jetton wallet bound.");
+    const confirmed = await waitForUsdtWallet(opened, jettonWallet);
+    console.log("USDT jetton wallet bound:", confirmed.toString());
   } else {
     console.log("USDT jetton wallet already bound.");
   }
 
+  const live = await withRetry("getContractState", () => client.getContractState(registry.address));
+  const liveHash = live.code?.hash().toString("hex");
+  if (liveHash !== acceptedCodeHash) {
+    throw new Error(
+      `Deployed code hash ${liveHash || "missing"} does not match this source (${acceptedCodeHash}). Do not point the app at this address.`,
+    );
+  }
+
   console.log("\n--- copy into .env.local ---");
-  console.log("NEXT_PUBLIC_TON_NETWORK=testnet");
+  console.log(`NEXT_PUBLIC_TON_NETWORK=${network}`);
   console.log(`NEXT_PUBLIC_USDT_JETTON=${usdtMaster.toString()}`);
   console.log(`NEXT_PUBLIC_PASSGRAM_REGISTRY=${registry.address.toString()}`);
   console.log(`PASSGRAM_REGISTRY_ADDRESS=${registry.address.toString()}`);
-  console.log("TON_API_URL=https://testnet.toncenter.com/api/v2");
+  console.log(`PASSGRAM_REGISTRY_CODE_HASH=${acceptedCodeHash}`);
+  console.log(`TON_API_URL=${network === "mainnet" ? "https://toncenter.com/api/v2" : "https://testnet.toncenter.com/api/v2"}`);
 }
 
 async function waitSeqno(walletContract: { getSeqno: () => Promise<number> }, prev: number) {
@@ -287,6 +326,23 @@ async function waitSeqno(walletContract: { getSeqno: () => Promise<number> }, pr
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+async function waitForUsdtWallet(
+  opened: { getUsdtJettonWallet: () => Promise<Address | null> },
+  expected: Address,
+): Promise<Address> {
+  for (let i = 0; i < 30; i++) {
+    await sleep(2500);
+    const current = await opened.getUsdtJettonWallet();
+    if (current && current.equals(expected)) return current;
+    if (current && !current.equals(expected)) {
+      throw new Error(
+        `USDT jetton wallet was set to ${current.toString()} instead of ${expected.toString()}.`,
+      );
+    }
+  }
+  throw new Error("USDT master did not confirm this contract's jetton wallet.");
 }
 
 async function withRetry<T>(label: string, fn: () => Promise<T>, attempts = 8): Promise<T> {

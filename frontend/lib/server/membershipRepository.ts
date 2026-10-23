@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { databaseSsl } from "./databaseSsl";
 import { ChannelConfigError } from "./channelRepository";
 
 export type OwnedCommunityRow = {
@@ -71,6 +72,7 @@ export interface MembershipRepository {
   listSubscriberChannels(telegramUserId: number): Promise<SubscriberChannelRow[]>;
   listSubscriberInvites(telegramUserId: number): Promise<SubscriberInviteRow[]>;
   linkTonWallet(telegramUserId: number, tonAddress: string): Promise<"linked" | "taken">;
+  getLinkedWallet(telegramUserId: number): Promise<string | null>;
   upsertProfile(profile: TelegramProfileInput): Promise<void>;
   getProfile(telegramUserId: number): Promise<TelegramProfileInput | null>;
   listCurrentSubscriberIds(communityId: number, nowMs: number): Promise<string[]>;
@@ -92,7 +94,7 @@ export function getMembershipRepository(): Promise<MembershipRepository> {
 }
 
 async function postgresRepository(databaseUrl: string): Promise<MembershipRepository> {
-  const pool = new Pool({ connectionString: databaseUrl });
+  const pool = new Pool({ connectionString: databaseUrl, ssl: databaseSsl(databaseUrl) });
   return new PostgresMembershipRepository(pool);
 }
 
@@ -334,22 +336,41 @@ class PostgresMembershipRepository implements MembershipRepository {
   }
 
   async linkTonWallet(telegramUserId: number, tonAddress: string): Promise<"linked" | "taken"> {
+    const client = await this.pool.connect();
     try {
-      await this.pool.query(
-        `insert into telegram_wallets (telegram_user_id, near_account_id, ton_address)
-         values ($1, $2, $2)
+      await client.query("begin");
+      await client.query(
+        `delete from telegram_wallets
+         where telegram_user_id <> $2
+           and ton_address = $1`,
+        [tonAddress, telegramUserId],
+      );
+      await client.query(
+        `insert into telegram_wallets (telegram_user_id, ton_address)
+         values ($1, $2)
          on conflict (telegram_user_id) do update set
-           near_account_id = excluded.near_account_id,
            ton_address = excluded.ton_address,
            linked_at = now()`,
         [telegramUserId, tonAddress],
       );
+      await client.query("commit");
       return "linked";
     } catch (error) {
+      await client.query("rollback");
       const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
       if (code === "23505") return "taken";
       throw error;
+    } finally {
+      client.release();
     }
+  }
+
+  async getLinkedWallet(telegramUserId: number): Promise<string | null> {
+    const result = await this.pool.query<{ ton_address: string | null }>(
+      `select ton_address from telegram_wallets where telegram_user_id = $1`,
+      [telegramUserId],
+    );
+    return result.rows[0]?.ton_address ?? null;
   }
 
   async getProfile(telegramUserId: number): Promise<TelegramProfileInput | null> {

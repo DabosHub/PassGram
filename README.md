@@ -14,7 +14,7 @@ The subscriber pays the listed USDT price. PassGram does not add a markup.
 
 The PassGram affiliate earns 20% of the platform fee (0.5% of the subscription price). That referral locks the first time someone opens PassGram from the link.
 
-A community marketer earns the creator's configured percent of the creator share, after the 2.5% platform fee. The subscriber price does not change. The percent locks on that subscriber's first confirmed payment and is paid again on every renewal. That first payment carries a short-lived signature from the registry owner over the payout stored for the referral link. A payment that changes the address is returned and does not lock a marketer. The published testnet contract enforces this only after it is redeployed.
+A community marketer earns the creator's configured percent of the creator share, after the 2.5% platform fee. The subscriber price does not change. The percent locks on that subscriber's first confirmed payment and is paid again on every renewal. That first payment carries a short-lived signature from the registry owner over the receiving wallet confirmed for the referral link. A payment that changes the address is returned and does not lock a marketer. The server signs that payment only when the configured registry is this source.
 
 ## Repository layout
 
@@ -34,7 +34,7 @@ npm run dev
 npm test
 ```
 
-Uses **TON Connect** (`@tonconnect/ui-react`) for wallet connect and USDT Jetton checkout. Manifest: `frontend/public/tonconnect-manifest.json`.
+Uses **TON Connect** (`@tonconnect/ui-react`) for wallet connect and USDT Jetton checkout. The manifest is served by `frontend/app/tonconnect-manifest.json/route.ts`.
 
 Channel verify, referrals, webhooks, and community APIs remain under `frontend/app/api` and `frontend/lib/server`.
 
@@ -91,6 +91,14 @@ Required public TON keys:
 - Moving Mini App Telegram APIs into bot-service
 - Native TON (non-Jetton) as the primary checkout path
 - Mainnet contract deploy / live secret rotation
+
+## Community
+
+- [Contributing](CONTRIBUTING.md)
+- [Architecture](ARCHITECTURE.md)
+- [Code of conduct](CODE_OF_CONDUCT.md)
+- [Security](SECURITY.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 

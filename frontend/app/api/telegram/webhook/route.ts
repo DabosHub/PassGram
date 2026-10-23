@@ -1,3 +1,5 @@
+export const runtime = "nodejs";
+
 import crypto from "node:crypto";
 import { ingestTelegramUpdate } from "@/lib/server/channelFlow";
 import { buildChannelDeps, channelFailure, ChannelConfigError } from "@/lib/server/channelDeps";

@@ -159,14 +159,12 @@ export function communityFormReady(input: {
   botAdded: boolean;
   price: string;
   durationDays: number | null;
-  payout: string;
 }): boolean {
   return (
     (input.channelState === "verified" || input.channelState === "permission_missing") &&
     input.botAdded &&
     parseCommunityPrice(input.price) != null &&
-    parseDurationDays(input.durationDays) != null &&
-    tonAddressKind(input.payout) != null
+    parseDurationDays(input.durationDays) != null
   );
 }
 

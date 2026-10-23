@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { databaseSsl } from "./databaseSsl";
 import type { AffiliateRecord, AttributionRecord } from "../referralPolicy";
 import { ChannelConfigError } from "./channelRepository";
 
@@ -66,7 +67,7 @@ export function getReferralRepository(): Promise<ReferralRepository> {
 }
 
 async function postgresRepository(databaseUrl: string): Promise<ReferralRepository> {
-  return new PostgresReferralRepository(new Pool({ connectionString: databaseUrl }));
+  return new PostgresReferralRepository(new Pool({ connectionString: databaseUrl, ssl: databaseSsl(databaseUrl) }));
 }
 
 class PostgresReferralRepository implements ReferralRepository {
@@ -88,10 +89,10 @@ class PostgresReferralRepository implements ReferralRepository {
 
   async saveAffiliate(row: AffiliateRecord): Promise<AffiliateRecord> {
     await this.pool.query(
-      `insert into affiliates (code, telegram_user_id, payout_account, signer_address, created_at)
-       values ($1, $2, $3, $4, $5)
+      `insert into affiliates (code, telegram_user_id, payout_account, created_at)
+       values ($1, $2, $3, $4)
        on conflict (telegram_user_id) do nothing`,
-      [row.code, row.telegramUserId, row.payoutAccount, row.signerAddress || null, row.createdAt],
+      [row.code, row.telegramUserId, row.payoutAccount, row.createdAt],
     );
     const saved = await this.getAffiliateByTelegramUserId(row.telegramUserId);
     if (!saved) throw new Error("Affiliate could not be saved.");
@@ -120,7 +121,7 @@ function mapAffiliate(row: Record<string, unknown>): AffiliateRecord {
     code: String(row.code),
     telegramUserId: String(row.telegram_user_id),
     payoutAccount: String(row.payout_account),
-    signerAddress: typeof row.signer_address === "string" && row.signer_address ? row.signer_address : null,
+    signerAddress: String(row.payout_account),
     createdAt: new Date(String(row.created_at)).toISOString(),
   };
 }

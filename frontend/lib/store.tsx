@@ -4,11 +4,12 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type R
 import { paymentBlockers, type AffiliateProfile, type Confirmation } from "./domain";
 import { normalizeCode } from "./money";
 import { contractIsConfigured } from "./ton/config";
-import { normalizeTonAddress } from "./ton/config";
 import { sendSubscriptionPayment } from "./ton/payments";
 import { mergeSubscriberSnapshot, type SubscriberSnapshot } from "./subscriberLedger";
-import { getConnectedTonAddress } from "./ton/wallet";
-import { connectTonWallet, type WalletSendResult } from "./ton/wallet";
+import { getConnectedTonAddress, signLinkedWallet, connectTonWallet, type WalletSendResult } from "./ton/wallet";
+import { tonWalletKey } from "./ton/walletKey";
+import { isDemoLabEnabled } from "./demoLab";
+import type { PayoutWalletProof } from "./ton/walletProof";
 import { confirmCommunityCreation, confirmPayment, type Gate } from "./services/confirmation";
 
 export type PassgramUser = {
@@ -115,11 +116,10 @@ type Store = Ledger & {
     username: string;
     avatarUrl: string;
   }) => void;
-  savePayout: (payoutAddress: string) => string | null;
   acceptReferral: (code: string) => Promise<string | null>;
   prepareCommunity: () => Promise<ActionOutcome>;
   preparePayment: (communityId: number) => Promise<ActionOutcome>;
-  prepareAffiliate: (input: { payoutAddress: string; signerAddress?: string | null }) => Promise<ActionOutcome>;
+  prepareAffiliate: (proof: PayoutWalletProof) => Promise<ActionOutcome>;
   patchOwnedCommunity: (
     communityId: number,
     patch: Partial<Pick<CommunityRecord, "price" | "periodSeconds" | "payoutAddress" | "referralEnabled" | "referralPercentBps" | "status">>,
@@ -253,13 +253,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             },
           };
         });
-      },
-      savePayout: (payoutAddress) => {
-        const payout = normalizeTonAddress(payoutAddress);
-        if (!payout) return "Enter a TON address (EQ… / UQ… or 0:…).";
-        setSession((current) => ({ ...current, user: { ...current.user, payoutAddress: payout } }));
-        setNotice("Payout preference saved on this device. It is not registered on-chain and does not move funds.");
-        return null;
       },
       patchOwnedCommunity: (communityId, patch) => {
         const owned = session.communities.some((item) => item.id === communityId && item.ownerUserId === session.user.id);
@@ -418,16 +411,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         const initData = typeof window !== "undefined" ? window.Telegram?.WebApp?.initData || "" : "";
         const linkedAddress = getConnectedTonAddress();
-        if (initData && linkedAddress) {
+        if (initData && linkedAddress && !isDemoLabEnabled()) {
           try {
-            const linked = await fetch("/api/telegram/wallet", {
-              method: "POST",
-              headers: { "content-type": "application/json", "x-telegram-init-data": initData },
-              body: JSON.stringify({ address: linkedAddress }),
+            const known = await fetch("/api/telegram/wallet", {
+              headers: { "x-telegram-init-data": initData },
             });
-            const body = (await linked.json()) as { ok?: boolean; message?: string };
-            if (!body.ok) {
-              return { ok: false, reasons: [body.message || "Wallet could not be linked to this Telegram account."], tx: null };
+            const saved = (await known.json()) as { ok?: boolean; address?: string | null };
+            const savedKey = saved.ok ? tonWalletKey(saved.address || "") : null;
+            const connectedKey = tonWalletKey(linkedAddress);
+            if (!savedKey || savedKey !== connectedKey) {
+              const telegramUserId = session.user.telegramUserId ? String(session.user.telegramUserId) : "";
+              const signed = await signLinkedWallet(telegramUserId);
+              if (!signed.ok) return { ok: false, reasons: [signed.message], tx: null };
+              const linked = await fetch("/api/telegram/wallet", {
+                method: "POST",
+                headers: { "content-type": "application/json", "x-telegram-init-data": initData },
+                body: JSON.stringify({ proof: signed.proof }),
+              });
+              const body = (await linked.json()) as { ok?: boolean; message?: string };
+              if (!body.ok) {
+                return { ok: false, reasons: [body.message || "Wallet could not be linked to this Telegram account."], tx: null };
+              }
             }
           } catch {
             return { ok: false, reasons: ["Wallet link could not reach the server."], tx: null };
@@ -487,15 +491,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const gate = await confirmPayment();
         return { ok: false, reasons: [...reasons, ...gate.reasons], tx };
       },
-      prepareAffiliate: async (input) => {
-        const payout = normalizeTonAddress(input.payoutAddress);
-        if (!payout) {
-          return {
-            ok: false,
-            reasons: ["Enter a TON payout address (EQ… / UQ… or 0:…)."],
-            tx: null,
-          };
-        }
+      prepareAffiliate: async (proof) => {
         try {
           const response = await fetch("/api/telegram/referrals/register", {
             method: "POST",
@@ -504,9 +500,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               "x-telegram-init-data": typeof window !== "undefined" ? window.Telegram?.WebApp?.initData || "" : "",
             },
             body: JSON.stringify({
-              payoutAccount: payout,
+              proof,
               telegramUsername: session.user.username,
-              signerAddress: input.signerAddress || null,
             }),
           });
           const result = (await response.json()) as {

@@ -1,9 +1,14 @@
+export const runtime = "nodejs";
+
+import { limitedResponse } from "@/lib/server/rateLimit";
 import { ChannelConfigError } from "@/lib/server/channelDeps";
 import { validateInitData } from "@/lib/server/initData";
 import { readSubscriberLedger } from "@/lib/server/membershipFlow";
 import { readSubscriberAccess } from "@/lib/server/subscriberAccessFlow";
 
 export async function GET(request: Request) {
+  const limited = limitedResponse(request, "read");
+  if (limited) return limited;
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   if (!botToken) {
     return Response.json({ ok: false, message: "PassGramBot is not configured." }, { status: 503 });

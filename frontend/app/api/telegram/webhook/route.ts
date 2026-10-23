@@ -5,9 +5,10 @@ import { ingestTelegramUpdate } from "@/lib/server/channelFlow";
 import { buildChannelDeps, channelFailure, ChannelConfigError } from "@/lib/server/channelDeps";
 import { attributeFromWebhook } from "@/lib/server/referralFlow";
 import { buildReferralDeps } from "@/lib/server/referralDeps";
+import { webhookSecret } from "@/lib/server/telegramWebhook";
 
 export async function POST(request: Request) {
-  const expected = process.env.TELEGRAM_WEBHOOK_SECRET || "";
+  const expected = webhookSecret();
   if (!expected) {
     return Response.json(
       { ok: false, message: "Set TELEGRAM_WEBHOOK_SECRET and register it with setWebhook before accepting updates." },

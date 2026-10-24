@@ -41,6 +41,11 @@ export interface ChannelRepository {
     payoutAccount: string;
   }): Promise<{ result: "created" | "exists" | "missing" | "not_verified" | "conflict"; row: ChannelSnapshot | null }>;
   saveChannel(row: ChannelSnapshot): Promise<void>;
+  recordRegistration(input: {
+    communityId: number;
+    ownerTelegramUserId: string;
+    signatureHash: string;
+  }): Promise<{ row: ChannelSnapshot; newlyActive: boolean } | null>;
 }
 
 type MemoryState = {
@@ -103,6 +108,7 @@ export class MemoryChannelRepository implements ChannelRepository {
       referrerTelegramUserId: row.referrerTelegramUserId ?? current?.referrerTelegramUserId ?? null,
       referralEnabled: current?.referralEnabled ?? row.referralEnabled ?? false,
       referralPercentBps: current?.referralPercentBps ?? row.referralPercentBps ?? 0,
+      registrationSignatureHash: current?.registrationSignatureHash ?? row.registrationSignatureHash ?? null,
       active: current?.active ?? false,
       paused: current?.paused ?? row.paused ?? false,
     });
@@ -130,11 +136,31 @@ export class MemoryChannelRepository implements ChannelRepository {
       this.state.channels.set(input.telegramChatId, row);
       return { ...decision, row };
     }
+    if (decision.row && decision.result === "exists" && decision.row.registrationSignatureHash) {
+      this.state.channels.set(input.telegramChatId, decision.row);
+    }
     return decision;
   }
 
   async saveChannel(row: ChannelSnapshot): Promise<void> {
     this.state.channels.set(row.telegramChatId, { ...row });
+  }
+
+  async recordRegistration(input: {
+    communityId: number;
+    ownerTelegramUserId: string;
+    signatureHash: string;
+  }): Promise<{ row: ChannelSnapshot; newlyActive: boolean } | null> {
+    for (const [chatId, row] of this.state.channels) {
+      if (row.communityId !== input.communityId) continue;
+      if (row.ownerTelegramUserId !== input.ownerTelegramUserId) return null;
+      if (row.registrationSignatureHash && row.registrationSignatureHash !== input.signatureHash) return null;
+      const newlyActive = !row.active;
+      const next = { ...row, active: true, registrationSignatureHash: input.signatureHash };
+      this.state.channels.set(chatId, next);
+      return { row: next, newlyActive };
+    }
+    return null;
   }
 }
 
@@ -272,6 +298,11 @@ class PostgresChannelRepository implements ChannelRepository {
       const current = await client.query(`select * from creator_communities where telegram_chat_id = $1 for update`, [input.telegramChatId]);
       const existing = current.rows[0] ? mapChannel(current.rows[0]) : null;
       const decision = nextActivation(existing, input);
+      if (decision.row && decision.result === "exists" && decision.row.registrationSignatureHash && !existing?.active) {
+        await writeChannel(client, decision.row);
+        await client.query("commit");
+        return decision;
+      }
       if (decision.result === "created" && decision.row) {
         const withId = {
           ...decision.row,
@@ -305,6 +336,46 @@ class PostgresChannelRepository implements ChannelRepository {
 
   async saveChannel(row: ChannelSnapshot): Promise<void> {
     await writeChannel(this.pool, row);
+  }
+
+  async recordRegistration(input: {
+    communityId: number;
+    ownerTelegramUserId: string;
+    signatureHash: string;
+  }): Promise<{ row: ChannelSnapshot; newlyActive: boolean } | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      const current = await client.query(
+        `select * from creator_communities where community_id = $1 for update`,
+        [input.communityId],
+      );
+      const existing = current.rows[0] ? mapChannel(current.rows[0]) : null;
+      if (!existing || existing.ownerTelegramUserId !== input.ownerTelegramUserId) {
+        await client.query("rollback");
+        return null;
+      }
+      if (existing.registrationSignatureHash && existing.registrationSignatureHash !== input.signatureHash) {
+        await client.query("rollback");
+        return null;
+      }
+      const saved = await client.query(
+        `update creator_communities
+         set registration_signature_hash = $2, active = true
+         where community_id = $1
+         returning *`,
+        [input.communityId, input.signatureHash],
+      );
+      await client.query("commit");
+      const row = saved.rows[0] ? mapChannel(saved.rows[0]) : null;
+      if (!row) return null;
+      return { row, newlyActive: !existing.active };
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }
 
@@ -402,5 +473,6 @@ function mapChannel(row: Record<string, unknown>): ChannelSnapshot {
     referralPercentBps: row.referral_percent_bps == null ? 0 : Number(row.referral_percent_bps),
     active: Boolean(row.active),
     paused: Boolean(row.paused),
+    registrationSignatureHash: row.registration_signature_hash == null ? null : String(row.registration_signature_hash),
   };
 }

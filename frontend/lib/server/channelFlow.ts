@@ -28,6 +28,9 @@ import { normalizeTonAddress } from "../ton/config";
 import type { ChannelRepository } from "./channelRepository";
 import { validateInitData } from "./initData";
 import { tonWalletKey } from "../ton/walletKey";
+import { Cell } from "@ton/core";
+import { bocContainsCell, buildRegisterCommunityBody } from "../ton/registry";
+import { authorizeCommunityRegistration } from "./communityAuthorization";
 import { downloadTelegramFile, TelegramApiError, type TelegramClient } from "./telegramClient";
 
 export type ChannelDeps = {
@@ -370,27 +373,83 @@ export async function createVerifiedCommunity(
   if (activated.result === "not_verified" || activated.result === "missing" || !activated.row) {
     return fail("verification_failed", "This channel is not verified, so no community was created.");
   }
-  if (activated.result === "created" && attribution?.referrerTelegramUserId && activated.row.communityId) {
+  return {
+    ok: true,
+    state: "verified",
+    message:
+      activated.result === "exists"
+        ? "This channel already has a community."
+        : "Sign RegisterCommunity in your wallet. The community stays unpublished until that signature is stored.",
+    alreadyExists: activated.result === "exists",
+    channel: toPublic(activated.row),
+    communityId: activated.row.communityId ?? undefined,
+    platformMarketer: attribution?.referrerPayout || null,
+  };
+}
+
+/** Publishes the draft only after the wallet message carries the owner signature. */
+export async function confirmCommunityRegistration(
+  deps: ChannelDeps,
+  initData: string,
+  input: { communityId: number; boc: string },
+): Promise<ChannelResult> {
+  const identity = validateInitData(initData, deps.botToken, deps.now() / 1000);
+  if (!identity) return fail("verification_failed", "Open PassGram from Telegram so your account can be confirmed.");
+  if (!Number.isSafeInteger(input.communityId) || input.communityId < 1) {
+    return fail("verification_failed", "This community is invalid.");
+  }
+  const channel = await deps.repo.getChannelByCommunityId(input.communityId);
+  if (!channel || channel.ownerTelegramUserId !== String(identity.userId) || !channel.payoutAccount) {
+    return fail("verification_failed", "This community is not yours.");
+  }
+  const approved = await authorizeCommunityRegistration(deps, initData, {
+    communityId: input.communityId,
+    creator: channel.payoutAccount,
+  });
+  if (!approved.ok) return fail("verification_failed", approved.message);
+  const body = buildRegisterCommunityBody({
+    communityId: input.communityId,
+    creator: approved.creator,
+    payout: approved.payout,
+    price: approved.price,
+    durationSeconds: approved.durationSeconds,
+    platformMarketer: approved.platformMarketer,
+    communityReferralBps: approved.communityReferralBps,
+    authorization: approved.signature,
+  });
+  const expected = Cell.fromBase64(body);
+  if (!bocContainsCell(input.boc, expected)) {
+    return fail("verification_failed", "Your wallet did not sign RegisterCommunity. The community was not published.");
+  }
+  const signature = Buffer.from(approved.signature, "base64");
+  const signatureHash = crypto.createHash("sha256").update(signature).digest("hex");
+  const saved = await deps.repo.recordRegistration({
+    communityId: input.communityId,
+    ownerTelegramUserId: String(identity.userId),
+    signatureHash,
+  });
+  if (!saved) {
+    return fail("verification_failed", "This community signature could not be stored.");
+  }
+  if (saved.newlyActive && channel.referrerTelegramUserId && saved.row.communityId) {
     await deliverReferralConversionNotice({
       telegram: deps.telegram,
-      recipientId: attribution.referrerTelegramUserId,
+      recipientId: channel.referrerTelegramUserId,
       actorId: String(identity.userId),
       text: referralConversionNoticeText({
         program: "passgram",
-        title: activated.row.title,
+        title: saved.row.title,
         actorName: identity.displayName,
       }),
-      url: communityReferralNoticeUrl(activated.row.communityId),
+      url: communityReferralNoticeUrl(saved.row.communityId),
     });
   }
   return {
     ok: true,
     state: "verified",
-    message: activated.result === "exists" ? "This channel already has a community." : "Community created.",
-    alreadyExists: activated.result === "exists",
-    channel: toPublic(activated.row),
-    communityId: activated.row.communityId ?? undefined,
-    platformMarketer: attribution?.referrerPayout || null,
+    message: "Community published. The RegisterCommunity signature is stored.",
+    channel: toPublic(saved.row),
+    communityId: saved.row.communityId ?? undefined,
   };
 }
 

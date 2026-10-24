@@ -351,68 +351,78 @@ export function CreateView() {
         setFormError(result.message || "No community was created.");
         return;
       }
-      if (result.channel) setChannel(result.channel);
       const communityId = result.communityId ?? result.channel?.communityId ?? null;
       const priceUsdt = parseCommunityPrice(price);
-      if (communityId && priceUsdt && durationDays) {
-        store.rememberCommunity({
-          communityId,
-          title: result.channel?.title || channel?.title || "Community",
-          description: result.channel?.description ?? channel?.description ?? null,
-          priceUsdt,
-          durationDays,
-          ownerTelegramUserId: String(
-            result.channel?.ownerTelegramUserId || store.user.telegramUserId || "",
-          ),
-          payoutAddress: creatorWallet,
-        });
-        const creator = creatorWallet;
-        if (!creator || !contractIsConfigured()) {
-          setFormError("The registry contract is not configured, so RegisterCommunity was not signed.");
-          return;
-        }
-        const approved = await fetch(`/api/telegram/communities/${communityId}/authorization`, {
-          method: "POST",
-          headers: { ...telegramHeaders(), "content-type": "application/json" },
-          body: JSON.stringify({ creator }),
-        });
-        const approval = (await approved.json()) as {
-          ok?: boolean;
-          signature?: string;
-          message?: string;
-          creator?: string;
-          payout?: string;
-          price?: string;
-          durationSeconds?: number;
-          platformMarketer?: string | null;
-          communityReferralBps?: number;
-        };
-        if (!approval.ok || !approval.signature || !approval.creator || !approval.payout || !approval.price || !approval.durationSeconds) {
-          setFormError(approval.message || "PassGram did not approve this community for your wallet, so RegisterCommunity was not sent.");
-          return;
-        }
-        const signed = await sendRegistryCall({
-          payloadBase64: buildRegisterCommunityBody({
-            communityId,
-            creator: approval.creator,
-            payout: approval.payout,
-            price: approval.price,
-            durationSeconds: approval.durationSeconds,
-            platformMarketer: approval.platformMarketer,
-            communityReferralBps: approval.communityReferralBps ?? 0,
-            authorization: approval.signature,
-          }),
-          tonAmount: toNano("0.08").toString(),
-        });
-        if (!signed) {
-          setFormError("Your wallet did not sign RegisterCommunity. Payment cannot start until that signature is sent.");
-          return;
-        }
-        setShareId(communityId);
-        setShareOpen(true);
+      if (!communityId || !priceUsdt || !durationDays) {
+        setFormError("No community was created.");
+        return;
       }
+      if (result.channel) setChannel(result.channel);
+      if (!contractIsConfigured()) {
+        setFormError("The registry contract is not configured, so RegisterCommunity was not signed.");
+        return;
+      }
+      const approved = await fetch(`/api/telegram/communities/${communityId}/authorization`, {
+        method: "POST",
+        headers: { ...telegramHeaders(), "content-type": "application/json" },
+        body: JSON.stringify({ creator: creatorWallet }),
+      });
+      const approval = (await approved.json()) as {
+        ok?: boolean;
+        signature?: string;
+        message?: string;
+        creator?: string;
+        payout?: string;
+        price?: string;
+        durationSeconds?: number;
+        platformMarketer?: string | null;
+        communityReferralBps?: number;
+      };
+      if (!approval.ok || !approval.signature || !approval.creator || !approval.payout || !approval.price || !approval.durationSeconds) {
+        setFormError(approval.message || "PassGram did not approve this community for your wallet, so RegisterCommunity was not sent.");
+        return;
+      }
+      const payloadBase64 = buildRegisterCommunityBody({
+        communityId,
+        creator: approval.creator,
+        payout: approval.payout,
+        price: approval.price,
+        durationSeconds: approval.durationSeconds,
+        platformMarketer: approval.platformMarketer,
+        communityReferralBps: approval.communityReferralBps ?? 0,
+        authorization: approval.signature,
+      });
+      const boc = await sendRegistryCall({
+        payloadBase64,
+        tonAmount: toNano("0.08").toString(),
+      });
+      if (!boc) {
+        setFormError("Your wallet did not sign RegisterCommunity. The community was not published.");
+        return;
+      }
+      const published = await fetch(`/api/telegram/communities/${communityId}/registration`, {
+        method: "POST",
+        headers: { ...telegramHeaders(), "content-type": "application/json" },
+        body: JSON.stringify({ boc }),
+      });
+      const saved = (await published.json()) as { ok?: boolean; message?: string };
+      if (!saved.ok) {
+        setFormError(saved.message || "The contract signature was not stored, so the community was not published.");
+        return;
+      }
+      store.rememberCommunity({
+        communityId,
+        title: result.channel?.title || channel?.title || "Community",
+        description: result.channel?.description ?? channel?.description ?? null,
+        priceUsdt,
+        durationDays,
+        ownerTelegramUserId: String(result.channel?.ownerTelegramUserId || store.user.telegramUserId || ""),
+        payoutAddress: creatorWallet,
+      });
+      setShareId(communityId);
+      setShareOpen(true);
       setCreated(true);
-      setFormMessage("Community saved. Your wallet submitted RegisterCommunity. Subscription payments are sent to that wallet.");
+      setFormMessage("Community published. Your wallet signed RegisterCommunity, and that signature is stored.");
     } catch {
       setFormError("No community was created.");
     } finally {

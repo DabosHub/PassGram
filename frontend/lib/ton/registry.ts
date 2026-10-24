@@ -1,4 +1,4 @@
-import { Address, beginCell } from "@ton/core";
+import { Address, beginCell, Cell } from "@ton/core";
 
 /** opcode "SCRF" — SetCommunityReferral */
 export const OP_SET_COMMUNITY_REFERRAL = 0x53435246;
@@ -47,6 +47,30 @@ export function buildRegisterCommunityBody(input: {
     .storeRef(tail)
     .endCell();
   return cell.toBoc().toString("base64");
+}
+
+/** True when the wallet message contains this exact contract cell. */
+export function bocContainsCell(bocBase64: string, expected: Cell): boolean {
+  if (!bocBase64 || bocBase64.length > 20_000) return false;
+  let roots: Cell[];
+  try {
+    roots = Cell.fromBoc(Buffer.from(bocBase64, "base64"));
+  } catch {
+    return false;
+  }
+  const want = expected.hash().toString("hex");
+  const seen = new Set<string>();
+  const stack = [...roots];
+  while (stack.length > 0) {
+    const cell = stack.pop();
+    if (!cell) continue;
+    const hash = cell.hash().toString("hex");
+    if (seen.has(hash)) continue;
+    seen.add(hash);
+    if (hash === want) return true;
+    for (const ref of cell.refs) stack.push(ref);
+  }
+  return false;
 }
 
 /**

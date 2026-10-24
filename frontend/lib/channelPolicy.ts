@@ -73,6 +73,8 @@ export type ChannelSnapshot = {
   active: boolean;
   /** Creator-signed deactivation. Pages stay available; payments and new referrals do not. */
   paused: boolean;
+  /** SHA-256 of the owner authorization stored in RegisterCommunity. Null until that signature is stored. */
+  registrationSignatureHash?: string | null;
 };
 
 export function botAdministratorRights(): Record<(typeof ADMINISTRATOR_RIGHTS)[number], boolean> {
@@ -360,6 +362,9 @@ export function nextActivation(
   if (existing.verificationStatus !== "verified" || !existing.botCanInviteUsers || !existing.botCanRestrictMembers) {
     return { result: "not_verified", row: existing };
   }
+  if (existing.registrationSignatureHash) {
+    return { result: "exists", row: { ...existing, active: true } };
+  }
   if (existing.active) return { result: "exists", row: existing };
   return {
     result: "created",
@@ -373,7 +378,8 @@ export function nextActivation(
       referrerTelegramUserId: existing.referrerTelegramUserId,
       referralEnabled: existing.referralEnabled,
       referralPercentBps: existing.referralPercentBps,
-      active: true,
+      registrationSignatureHash: null,
+      active: false,
     },
   };
 }

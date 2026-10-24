@@ -17,6 +17,7 @@ import {
 } from "./channelPolicy.ts";
 import {
   createVerifiedCommunity,
+  confirmCommunityRegistration,
   ingestTelegramUpdate,
   prepareChannelSelection,
   recheckChannelAccess,
@@ -192,12 +193,60 @@ test("verification uses Telegram's chat, owner, and bot rights before a communit
   assert.equal(created.channel?.telegramMemberCount, 12);
   assert.ok(created.communityId && created.communityId > 0);
   assert.equal(created.channel?.communityId, created.communityId);
-  const active = await repo.getChannel("-100123");
-  assert.equal(active?.active, true);
-  assert.equal(active?.communityId, created.communityId);
+  const unpublished = await repo.getChannel("-100123");
+  assert.equal(unpublished?.active, false);
+  assert.equal(unpublished?.registrationSignatureHash ?? null, null);
+  assert.equal(unpublished?.communityId, created.communityId);
   assert.equal((await repo.getChannelByCommunityId(created.communityId!))?.title, "Alpha");
-  assert.equal(active?.priceUsdt, parseCommunityPrice("1.5"));
-  assert.equal(active?.durationDays, 30);
+  assert.equal(unpublished?.priceUsdt, parseCommunityPrice("1.5"));
+  assert.equal(unpublished?.durationDays, 30);
+
+  const previousRegistry = process.env.PASSGRAM_REGISTRY_ADDRESS;
+  const previousSecret = process.env.PASSGRAM_OWNER_SECRET;
+  process.env.PASSGRAM_REGISTRY_ADDRESS = "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs";
+  process.env.PASSGRAM_OWNER_SECRET = "11".repeat(32);
+  try {
+    const rejected = await confirmCommunityRegistration(deps, sign(42), {
+      communityId: created.communityId!,
+      boc: Buffer.from("not-a-wallet-message").toString("base64"),
+    });
+    assert.equal(rejected.ok, false);
+    assert.equal((await repo.getChannel("-100123"))?.active, false);
+
+    const { buildRegisterCommunityBody } = await import("./ton/registry.ts");
+    const { beginCell, Cell } = await import("@ton/core");
+    const { authorizeCommunityRegistration } = await import("./server/communityAuthorization.ts");
+    const approved = await authorizeCommunityRegistration(deps, sign(42), {
+      communityId: created.communityId!,
+      creator: "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs",
+    });
+    assert.equal(approved.ok, true);
+    if (!approved.ok) return;
+    const body = buildRegisterCommunityBody({
+      communityId: created.communityId!,
+      creator: approved.creator,
+      payout: approved.payout,
+      price: approved.price,
+      durationSeconds: approved.durationSeconds,
+      platformMarketer: approved.platformMarketer,
+      communityReferralBps: approved.communityReferralBps,
+      authorization: approved.signature,
+    });
+    const boc = beginCell().storeRef(Cell.fromBase64(body)).endCell().toBoc().toString("base64");
+    const published = await confirmCommunityRegistration(deps, sign(42), {
+      communityId: created.communityId!,
+      boc,
+    });
+    assert.equal(published.ok, true);
+    const active = await repo.getChannel("-100123");
+    assert.equal(active?.active, true);
+    assert.match(active?.registrationSignatureHash || "", /^[0-9a-f]{64}$/);
+  } finally {
+    if (previousRegistry === undefined) delete process.env.PASSGRAM_REGISTRY_ADDRESS;
+    else process.env.PASSGRAM_REGISTRY_ADDRESS = previousRegistry;
+    if (previousSecret === undefined) delete process.env.PASSGRAM_OWNER_SECRET;
+    else process.env.PASSGRAM_OWNER_SECRET = previousSecret;
+  }
 
   const duplicate = await createVerifiedCommunity(deps, sign(42), {
     requestId: owned.requestId || 0,

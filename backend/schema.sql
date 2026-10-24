@@ -119,6 +119,7 @@ create table creator_communities (
     referral_percent_bps integer not null default 0,
     active boolean not null default false,
     paused boolean not null default false,
+    registration_signature_hash text,
     created_at timestamptz not null default now(),
     constraint creator_communities_price check (price is null or price ~ '^[1-9][0-9]*$'),
     constraint creator_communities_referral_percent_bps check (referral_percent_bps >= 0 and referral_percent_bps <= 5000),

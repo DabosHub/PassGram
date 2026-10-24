@@ -68,7 +68,8 @@ export function CommunityRoute({
           };
         };
         if (cancelled) return;
-        if (!result.ok || !result.community) {
+        if (!response.ok || !result.ok || !result.community) {
+          if (response.status === 404 && communityId != null) store.forgetCommunity(communityId);
           setLoadError(result.message || "This community is unavailable.");
           return;
         }

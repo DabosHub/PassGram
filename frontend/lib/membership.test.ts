@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import test from "node:test";
 import { resolveSubscriberView } from "./subscriberAccess.ts";
-import { mergeSubscriberSnapshot } from "./subscriberLedger.ts";
+import { mergeSubscriberSnapshot, replaceSubscriberSnapshot } from "./subscriberLedger.ts";
 import { assembleOwnerLedger, linkSubscriberWallet } from "./server/membershipFlow.ts";
 import type { MembershipPaymentRow, MembershipRepository, MembershipRow, OwnedCommunityRow } from "./server/membershipRepository.ts";
 import { signPayoutWalletProof } from "./server/walletProof.ts";
@@ -112,6 +112,69 @@ test("a confirmed renewal rewrites the subscriber period and keeps the card id",
     null,
   );
   assert.equal(tonWalletKey("not-an-address"), null);
+});
+
+test("a subscriber snapshot replaces local memberships and keeps a rejoin card", () => {
+  const mine: SubscriptionRecord = {
+    id: 9101,
+    subscriberUserId: "tg:5",
+    communityId: 49,
+    confirmation: "confirmed",
+    startedAt: 1_000,
+    expiresAt: 2_000,
+    paymentAmount: "1000000",
+    paymentAsset: "USDT",
+    transactionReference: "old",
+    renewalPending: false,
+    createdAt: 1_000,
+  };
+  const other: SubscriptionRecord = { ...mine, id: 3, subscriberUserId: "tg:9", communityId: 8 };
+  const kept: SubscriptionRecord = { ...mine, id: 4, communityId: 50, transactionReference: "hold" };
+  const payment: PaymentRecord = {
+    id: 8,
+    communityId: 49,
+    subscriberUserId: "tg:5",
+    gross: "1000000",
+    creatorAmount: "975000",
+    platformFee: "25000",
+    affiliateAmount: "0",
+    communityAffiliateAmount: "0",
+    status: "confirmed",
+    transactionReference: "old",
+    at: 1_000,
+  };
+  const removed = replaceSubscriberSnapshot(
+    { userId: "tg:5", subscriptions: [mine, other, kept], payments: [payment] },
+    { subscriptions: [], payments: [] },
+    [50],
+  );
+  assert.deepEqual(
+    removed?.subscriptions.map((item) => item.communityId),
+    [8, 50],
+  );
+  assert.equal(removed?.payments.length, 0);
+  const server = {
+    subscriptions: [{ ...mine, id: 5, startedAt: 5_000, expiresAt: 9_000, transactionReference: "new" }],
+    payments: [{ ...payment, id: 11, transactionReference: "new", at: 5_000 }],
+  };
+  const renewed = replaceSubscriberSnapshot(
+    { userId: "tg:5", subscriptions: [mine, ...(removed?.subscriptions ?? [])], payments: [] },
+    server,
+    [50],
+  );
+  const card = renewed?.subscriptions.find((item) => item.communityId === 49);
+  assert.equal(card?.id, 9101);
+  assert.equal(card?.startedAt, 5_000);
+  assert.equal(renewed?.subscriptions.some((item) => item.communityId === 50), true);
+  assert.equal(renewed?.payments[0]?.transactionReference, "new");
+  assert.equal(
+    replaceSubscriberSnapshot(
+      { userId: "tg:5", subscriptions: renewed?.subscriptions ?? [], payments: renewed?.payments ?? [] },
+      server,
+      [50],
+    ),
+    null,
+  );
 });
 
 test("a subscriber outside the channel keeps the old card until join is verified", () => {

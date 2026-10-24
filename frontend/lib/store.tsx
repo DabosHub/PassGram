@@ -5,7 +5,8 @@ import { paymentBlockers, type AffiliateProfile, type Confirmation } from "./dom
 import { normalizeCode } from "./money";
 import { contractIsConfigured } from "./ton/config";
 import { sendSubscriptionPayment } from "./ton/payments";
-import { mergeSubscriberSnapshot, type SubscriberSnapshot } from "./subscriberLedger";
+import { replaceSubscriberSnapshot, type SubscriberSnapshot } from "./subscriberLedger";
+import { bumpOwnedSnapshotGeneration, replaceOwnedCommunities, type OwnerCommunityInput } from "./sessionSnapshot";
 import { getConnectedTonAddress, signLinkedWallet, connectTonWallet, disconnectTonWallet, type WalletSendResult } from "./ton/wallet";
 import { tonWalletKey } from "./ton/walletKey";
 import { isDemoLabEnabled } from "./demoLab";
@@ -144,7 +145,11 @@ type Store = Ledger & {
   }) => void;
   noteCommunityCreator: (communityId: number, creator: { displayName: string; username: string; avatarUrl: string }) => void;
   noteTelegramMembers: (communityId: number, count: number) => void;
-  applySubscriberLedger: (ledger: SubscriberSnapshot) => void;
+  applySubscriberLedger: (ledger: SubscriberSnapshot, retainCommunityIds?: readonly number[]) => void;
+  /** Replace this account's communities with a successful database list. An empty list clears them. */
+  applyOwnedCommunitySnapshot: (rows: readonly OwnerCommunityInput[]) => void;
+  /** Drop a community after the database says its public listing is gone. */
+  forgetCommunity: (communityId: number) => void;
   /** Dev lab only: replace local preview ledger for UI walkthroughs. */
   replaceLedger: (ledger: Ledger) => void;
   /** Dev lab only: show/hide the transaction overlay. */
@@ -272,6 +277,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return true;
       },
       rememberCommunity: (input) => {
+        bumpOwnedSnapshotGeneration();
         const ownerUserId = `tg:${input.ownerTelegramUserId}`;
         const row: CommunityRecord = {
           id: input.communityId,
@@ -313,14 +319,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return { ...current, communities: [...without, next] };
         });
       },
-      applySubscriberLedger: (ledger) => {
+      applySubscriberLedger: (ledger, retainCommunityIds = []) => {
         setSession((current) => {
-          const next = mergeSubscriberSnapshot(
+          const next = replaceSubscriberSnapshot(
             { userId: current.user.id, subscriptions: current.subscriptions, payments: current.payments },
             ledger,
+            retainCommunityIds,
           );
           if (!next) return current;
           return { ...current, subscriptions: next.subscriptions, payments: next.payments };
+        });
+      },
+      applyOwnedCommunitySnapshot: (rows) => {
+        setSession((current) => {
+          const ownerUserIds = [current.user.id];
+          if (current.user.telegramUserId != null && current.user.telegramUserId > 0) {
+            ownerUserIds.push(`tg:${current.user.telegramUserId}`);
+          }
+          const next = replaceOwnedCommunities(current.communities, ownerUserIds, rows);
+          if (!next) return current;
+          return { ...current, communities: next };
+        });
+      },
+      forgetCommunity: (communityId) => {
+        setSession((current) => {
+          if (!current.communities.some((item) => item.id === communityId)) return current;
+          return { ...current, communities: current.communities.filter((item) => item.id !== communityId) };
         });
       },
       noteCommunityCreator: (communityId, creator) => {

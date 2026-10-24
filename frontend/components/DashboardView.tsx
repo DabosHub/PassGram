@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   activePassgramCount,
   chooseDashboardSection,
@@ -15,6 +15,7 @@ import {
 } from "@/lib/domain";
 import { formatDate, formatUsdt } from "@/lib/money";
 import { useDemoLab } from "@/lib/demoLabContext";
+import { bumpOwnedSnapshotGeneration, ownedSnapshotGenerationIsCurrent, type OwnerCommunityInput } from "@/lib/sessionSnapshot";
 import { useOwnerLedger } from "@/lib/useOwnerLedger";
 import type { AppRoute } from "@/lib/route";
 import { useStore } from "@/lib/store";
@@ -26,52 +27,42 @@ export function DashboardView({ go }: { go: (route: AppRoute) => void }) {
   const store = useStore();
   const lab = useDemoLab();
   const now = useNow();
+  const storeRef = useRef(store);
+  storeRef.current = store;
   const owned = store.communities.filter((item) => item.ownerUserId === store.user.id);
   const subscriptions = store.subscriptions.filter((item) => item.subscriberUserId === store.user.id);
   const both = showsBothDashboardSections(owned.length, subscriptions.length);
   const [section, setSection] = useState<DashboardSection>("communities");
 
   useEffect(() => {
-    if (lab.enabled) return;
+    if (lab.enabled || !store.ready) return;
     let cancelled = false;
-    void fetch("/api/telegram/communities", {
-      headers: { "x-telegram-init-data": window.Telegram?.WebApp?.initData || "" },
-    })
-      .then(async (response) => {
-        const result = (await response.json()) as {
-          ok?: boolean;
-          communities?: Array<{
-            communityId: number | null;
-            title: string;
-            description: string | null;
-            priceUsdt: string | null;
-            durationDays: number | null;
-            ownerTelegramUserId: string;
-            active: boolean;
-            telegramMemberCount?: number | null;
-          }>;
-        };
-        if (cancelled || !result.ok || !result.communities) return;
-        for (const row of result.communities) {
-          if (row.communityId == null || !row.priceUsdt || row.durationDays == null) continue;
-          store.rememberCommunity({
-            communityId: row.communityId,
-            title: row.title,
-            description: row.description,
-            priceUsdt: row.priceUsdt,
-            durationDays: row.durationDays,
-            ownerTelegramUserId: row.ownerTelegramUserId,
-            telegramMemberCount: "telegramMemberCount" in row ? row.telegramMemberCount : undefined,
-          });
-        }
-      })
-      .catch(() => {
-        /* keep local store */
-      });
+    async function loadOwnedCommunities() {
+      const generation = bumpOwnedSnapshotGeneration();
+      try {
+        const response = await fetch("/api/telegram/communities", {
+          headers: { "x-telegram-init-data": window.Telegram?.WebApp?.initData || "" },
+        });
+        const result = (await response.json()) as { ok?: boolean; communities?: OwnerCommunityInput[] };
+        if (cancelled || !ownedSnapshotGenerationIsCurrent(generation)) return;
+        if (!response.ok || !result.ok || !Array.isArray(result.communities)) return;
+        storeRef.current.applyOwnedCommunitySnapshot(result.communities);
+      } catch {
+        /* Keep the last local copy until a successful database response arrives. */
+      }
+    }
+    void loadOwnedCommunities();
+    const timer = window.setInterval(() => void loadOwnedCommunities(), 15_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void loadOwnedCommunities();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [store, lab.enabled]);
+  }, [lab.enabled, store.ready]);
 
   useEffect(() => {
     const remembered = window.sessionStorage.getItem(SECTION_KEY);

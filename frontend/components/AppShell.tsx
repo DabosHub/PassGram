@@ -58,10 +58,13 @@ export function AppShell() {
   useEffect(() => {
     if (!subscriberLedger) return;
     const held = new Set(holdKey ? holdKey.split(",").map(Number) : []);
-    store.applySubscriberLedger({
-      subscriptions: subscriberLedger.subscriptions.filter((item) => !held.has(item.communityId)),
-      payments: subscriberLedger.payments.filter((item) => !held.has(item.communityId)),
-    });
+    store.applySubscriberLedger(
+      {
+        subscriptions: subscriberLedger.subscriptions,
+        payments: subscriberLedger.payments,
+      },
+      held.size ? [...held] : [],
+    );
   }, [store, subscriberLedger, holdKey]);
 
   useEffect(() => {

@@ -14,6 +14,14 @@ test("a bad poll interval falls back instead of spinning the indexer", () => {
   assert.equal(config.cronIntervalMs, 60_000);
 });
 
+test("the retired registry address is not indexed", () => {
+  const config = loadConfig({
+    ...base,
+    PASSGRAM_REGISTRY_ADDRESS: "EQBkUvELQJXV8iiAkSduh7M3IC1x5FxhrLc1WK_9LHgyHDI2",
+  });
+  assert.equal(config.registryAddress, "EQCZ-KnsXQKxbCl0wlS9C_OcNQvPOdK-w9mYiRA_-kxy0uv6");
+});
+
 test("a mainnet registry is not indexed through the testnet API", () => {
   assert.equal(
     registryApiUrl("EQBkUvELQJXV8iiAkSduh7M3IC1x5FxhrLc1WK_9LHgyHDI2", "https://testnet.toncenter.com/api/v2"),

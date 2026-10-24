@@ -9,6 +9,8 @@ export type BotServiceConfig = {
   cronIntervalMs: number;
 };
 
+const CURRENT_REGISTRY = "EQCZ-KnsXQKxbCl0wlS9C_OcNQvPOdK-w9mYiRA_-kxy0uv6";
+const RETIRED_REGISTRY = "EQBkUvELQJXV8iiAkSduh7M3IC1x5FxhrLc1WK_9LHgyHDI2";
 const MAINNET_API = "https://toncenter.com/api/v2";
 const TESTNET_API = "https://testnet.toncenter.com/api/v2";
 
@@ -29,7 +31,8 @@ export function registryApiUrl(address: string, configured: string | undefined):
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): BotServiceConfig {
   const databaseUrl = env.DATABASE_URL?.trim();
   const telegramBotToken = env.TELEGRAM_BOT_TOKEN?.trim();
-  const registryAddress = env.PASSGRAM_REGISTRY_ADDRESS?.trim() || env.NEXT_PUBLIC_PASSGRAM_REGISTRY?.trim();
+  const configuredRegistry = env.PASSGRAM_REGISTRY_ADDRESS?.trim() || env.NEXT_PUBLIC_PASSGRAM_REGISTRY?.trim() || "";
+  const registryAddress = !configuredRegistry || configuredRegistry === RETIRED_REGISTRY ? CURRENT_REGISTRY : configuredRegistry;
   if (!databaseUrl) throw new Error("DATABASE_URL is required");
   if (!telegramBotToken) throw new Error("TELEGRAM_BOT_TOKEN is required");
   if (!registryAddress) throw new Error("PASSGRAM_REGISTRY_ADDRESS is required");

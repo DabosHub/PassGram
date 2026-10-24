@@ -1,8 +1,8 @@
 import { Address, Cell } from "@ton/core";
-import { isTonAddress, tonConfig } from "../ton/config";
+import { configuredRegistry, isTonAddress, tonConfig } from "../ton/config";
 
 /** Code hash of the Tolk 1.5.0 registry. Must match contract/registry.codehash. */
-export const PASSGRAM_REGISTRY_CODE_HASH = "39446c74dc43c8b824b03d9495d7ee9251c6ac03b7fec1834332507ab7d19294";
+export const PASSGRAM_REGISTRY_CODE_HASH = "db8965a9ee8210beaa92285488794ba6cf39940dbf84c8ef17bfdba67c1c8961";
 
 export const REGISTRY_CODE_MISMATCH =
   "This registry is not the current PassGram contract. Registration and payments stay closed until this source is deployed.";
@@ -64,7 +64,7 @@ export async function requireCurrentRegistry(): Promise<{ ok: true } | { ok: fal
   if (process.env.NODE_ENV !== "production" && process.env.PASSGRAM_REGISTRY_CODE_CHECK === "off") {
     return { ok: true };
   }
-  const registry = (process.env.NEXT_PUBLIC_PASSGRAM_REGISTRY || process.env.PASSGRAM_REGISTRY_ADDRESS || "").trim();
+  const registry = configuredRegistry();
   if (!registry || !isTonAddress(registry)) {
     return { ok: false, message: "The registry contract is not configured, so this action was not sent." };
   }

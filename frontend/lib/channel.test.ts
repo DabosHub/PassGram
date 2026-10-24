@@ -241,6 +241,34 @@ test("verification uses Telegram's chat, owner, and bot rights before a communit
     const active = await repo.getChannel("-100123");
     assert.equal(active?.active, true);
     assert.match(active?.registrationSignatureHash || "", /^[0-9a-f]{64}$/);
+    const firstHash = active?.registrationSignatureHash;
+
+    process.env.PASSGRAM_REGISTRY_ADDRESS = "EQBkUvELQJXV8iiAkSduh7M3IC1x5FxhrLc1WK_9LHgyHDI2";
+    const moved = await authorizeCommunityRegistration(deps, sign(42), {
+      communityId: created.communityId!,
+      creator: "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs",
+    });
+    assert.equal(moved.ok, true);
+    if (!moved.ok) return;
+    const movedBody = buildRegisterCommunityBody({
+      communityId: created.communityId!,
+      creator: moved.creator,
+      payout: moved.payout,
+      price: moved.price,
+      durationSeconds: moved.durationSeconds,
+      platformMarketer: moved.platformMarketer,
+      communityReferralBps: moved.communityReferralBps,
+      authorization: moved.signature,
+    });
+    const movedBoc = beginCell().storeRef(Cell.fromBase64(movedBody)).endCell().toBoc().toString("base64");
+    const republished = await confirmCommunityRegistration(deps, sign(42), {
+      communityId: created.communityId!,
+      boc: movedBoc,
+    });
+    assert.equal(republished.ok, true);
+    const movedRow = await repo.getChannel("-100123");
+    assert.match(movedRow?.registrationSignatureHash || "", /^[0-9a-f]{64}$/);
+    assert.notEqual(movedRow?.registrationSignatureHash, firstHash);
   } finally {
     if (previousRegistry === undefined) delete process.env.PASSGRAM_REGISTRY_ADDRESS;
     else process.env.PASSGRAM_REGISTRY_ADDRESS = previousRegistry;

@@ -1,5 +1,5 @@
 import { Address } from "@ton/core";
-import { isTonAddress } from "../ton/config";
+import { configuredRegistry, isTonAddress } from "../ton/config";
 import { buildCommunityAuthorizationCell, buildCommunityReferralAuthorizationCell } from "../ton/communityAuthorization";
 import { validateInitData } from "./initData";
 import type { ChannelDeps } from "./channelFlow";
@@ -66,7 +66,7 @@ export async function authorizeCommunityRegistration(
       platformMarketer = attribution.referrerPayout;
     }
   }
-  const registry = (process.env.NEXT_PUBLIC_PASSGRAM_REGISTRY || process.env.PASSGRAM_REGISTRY_ADDRESS || "").trim();
+  const registry = configuredRegistry();
   if (!registry || !isTonAddress(registry)) {
     return { ok: false, message: "The registry contract is not configured, so this community cannot be approved." };
   }
@@ -127,7 +127,7 @@ export function signCommunityReferralAuthorization(input: {
   payout?: string | null;
   validUntil: number;
 }): ReferralAuthorizationResult {
-  const registry = (process.env.NEXT_PUBLIC_PASSGRAM_REGISTRY || process.env.PASSGRAM_REGISTRY_ADDRESS || "").trim();
+  const registry = configuredRegistry();
   if (!registry || !isTonAddress(registry)) {
     return { ok: false, message: "The registry contract is not configured, so this payment was not sent." };
   }

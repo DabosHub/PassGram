@@ -166,6 +166,12 @@ function jettonPayouts(tx: Transaction): { destination: Address; amount: bigint;
     const queryId = body.loadUintBig(64);
     const amount = body.loadCoins();
     const destination = body.loadAddress();
+    body.loadAddress();
+    assert.equal(body.loadBit(), false);
+    body.loadCoins();
+    assert.equal(body.loadBit(), false);
+    assert.equal(body.remainingBits, 0);
+    assert.equal(body.remainingRefs, 0);
     if (destination) payouts.push({ destination, amount, queryId });
   }
   return payouts;

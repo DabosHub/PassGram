@@ -124,6 +124,7 @@ struct (0x0f8a7ea5) JettonTransfer {
     responseDestination: address
     customPayload: cell?
     forwardTonAmount: coins
+    // TEP-74 forward_payload is Either Cell ^Cell. This slice must already contain that tag.
     forwardPayload: RemainingBitsAndRefs
 }
 
@@ -822,6 +823,11 @@ fun retryBouncedPayouts(st: Storage, alreadyQueued: int): Storage {
     return next;
 }
 
+fun emptyJettonForwardPayload(): slice {
+    // False selects the inline branch of Either Cell ^Cell and leaves that slice empty.
+    return beginCell().storeBool(false).endCell().beginParse();
+}
+
 fun payJettons(st: Storage, to: address, amount: coins, queryId: uint64) {
     val wallet = st.usdtJettonWallet;
     if (amount <= 0 || wallet == null) { return; }
@@ -836,7 +842,7 @@ fun payJettons(st: Storage, to: address, amount: coins, queryId: uint64) {
             responseDestination: contract.getAddress(),
             customPayload: null,
             forwardTonAmount: 0,
-            forwardPayload: createEmptySlice(),
+            forwardPayload: emptyJettonForwardPayload(),
         },
     }).send(SEND_MODE_REGULAR);
 }

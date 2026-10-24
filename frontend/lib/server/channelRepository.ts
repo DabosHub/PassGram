@@ -154,7 +154,6 @@ export class MemoryChannelRepository implements ChannelRepository {
     for (const [chatId, row] of this.state.channels) {
       if (row.communityId !== input.communityId) continue;
       if (row.ownerTelegramUserId !== input.ownerTelegramUserId) return null;
-      if (row.registrationSignatureHash && row.registrationSignatureHash !== input.signatureHash) return null;
       const newlyActive = !row.active;
       const next = { ...row, active: true, registrationSignatureHash: input.signatureHash };
       this.state.channels.set(chatId, next);
@@ -352,10 +351,6 @@ class PostgresChannelRepository implements ChannelRepository {
       );
       const existing = current.rows[0] ? mapChannel(current.rows[0]) : null;
       if (!existing || existing.ownerTelegramUserId !== input.ownerTelegramUserId) {
-        await client.query("rollback");
-        return null;
-      }
-      if (existing.registrationSignatureHash && existing.registrationSignatureHash !== input.signatureHash) {
         await client.query("rollback");
         return null;
       }

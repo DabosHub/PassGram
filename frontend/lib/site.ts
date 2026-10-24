@@ -1,14 +1,15 @@
 import { formatMiniAppHomeLink } from "./domain";
+import { configuredRegistry, CURRENT_REGISTRY } from "./ton/config";
 
 export const SITE_URL = "https://passgram.io";
 export const BOT_URL = "https://t.me/PassGramBot";
 export const MINI_APP_URL = formatMiniAppHomeLink();
 export const BOT_HANDLE = "@PassGramBot";
 export const GITHUB_URL = "https://github.com/DabosHub/PassGram";
-export const REGISTRY_ADDRESS = "EQBkUvELQJXV8iiAkSduh7M3IC1x5FxhrLc1WK_9LHgyHDI2";
+export const REGISTRY_ADDRESS = CURRENT_REGISTRY;
 
 export function registryAddress(): string {
-  return (process.env.NEXT_PUBLIC_PASSGRAM_REGISTRY || REGISTRY_ADDRESS).trim() || REGISTRY_ADDRESS;
+  return configuredRegistry();
 }
 
 export function registryUrl(address = registryAddress()): string {

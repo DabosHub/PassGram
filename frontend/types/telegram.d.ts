@@ -34,6 +34,7 @@ interface TelegramWebApp {
   themeParams: TelegramThemeParams;
   initData: string;
   initDataUnsafe: { user?: TelegramWebAppUser; start_param?: string };
+  platform?: string;
   version?: string;
   isVersionAtLeast?: (version: string) => boolean;
   requestChat?: (requestId: string, callback?: (sent: boolean) => void) => void;

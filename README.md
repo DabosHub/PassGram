@@ -25,7 +25,7 @@ A community marketer earns the creator's configured percent of the creator share
 ## Repository layout
 
 ```text
-contract/      Tact PassGramRegistry
+contract/      Tolk 1.5.0 PassGramRegistry
 frontend/      Telegram Mini App (Next.js) + channel/referral APIs
 bot-service/   TON indexer + subscription expiration cron
 backend/       SQL schema + migrations only
@@ -44,7 +44,7 @@ Uses **TON Connect** (`@tonconnect/ui-react`) for wallet connect and USDT Jetton
 
 Channel verify, referrals, webhooks, and community APIs remain under `frontend/app/api` and `frontend/lib/server`.
 
-## Contracts (Tact)
+## Contracts (Tolk 1.5.0)
 
 ```bash
 cd contract

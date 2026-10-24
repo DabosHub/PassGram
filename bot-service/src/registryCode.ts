@@ -2,7 +2,7 @@ import { Cell } from "@ton/core";
 import { fetchWithTimeout } from "./http.ts";
 
 /** Must match contract/registry.codehash and the Mini App constant. */
-export const PASSGRAM_REGISTRY_CODE_HASH = "059a7913ff627056f33068b260516ab67e50527c377fa9cbda044452ceb32bfb";
+export const PASSGRAM_REGISTRY_CODE_HASH = "39446c74dc43c8b824b03d9495d7ee9251c6ac03b7fec1834332507ab7d19294";
 
 export const REGISTRY_CODE_MISMATCH =
   "This registry is not the current PassGram contract. Indexing stays closed until this source is deployed.";

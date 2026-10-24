@@ -4,7 +4,7 @@ PassGram is a Telegram Mini App for paid USDT communities on TON. Read [ARCHITEC
 
 ## Layout
 
-- `contract/` — Tact registry. Build before tests. Change `contract/registry.codehash` only when the compiled code changes, and keep that hash in the app and the indexer.
+- `contract/` — Tolk 1.5.0 registry. Build before tests. Change `contract/registry.codehash` only when the compiled code changes, and keep that hash in the app and the indexer.
 - `frontend/` — Next.js Mini App and its APIs.
 - `bot-service/` — payment indexer and expiration cron.
 - `backend/` — `schema.sql` and ordered SQL migrations. Do not edit a migration that has already been applied.

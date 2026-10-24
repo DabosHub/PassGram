@@ -12,7 +12,7 @@ export const OP_UPDATE_COMMUNITY = 0x55504443;
 export const OP_SET_COMMUNITY_PAUSED = 0x53435053;
 /**
  * RegisterCommunity body. The signing wallet must equal `creator`.
- * Layout matches the Tact wrapper: inline fields, then one ref holding the optional
+ * Layout: inline fields, then one ref holding the optional
  * referrer, bps, access mode, and the owner's 64-byte authorization.
  */
 export function buildRegisterCommunityBody(input: {

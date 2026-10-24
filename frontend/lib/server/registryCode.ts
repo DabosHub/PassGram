@@ -1,8 +1,8 @@
 import { Address, Cell } from "@ton/core";
 import { isTonAddress, tonConfig } from "../ton/config";
 
-/** Code hash of contract/build PassGramRegistry. Must match contract/registry.codehash. */
-export const PASSGRAM_REGISTRY_CODE_HASH = "059a7913ff627056f33068b260516ab67e50527c377fa9cbda044452ceb32bfb";
+/** Code hash of the Tolk 1.5.0 registry. Must match contract/registry.codehash. */
+export const PASSGRAM_REGISTRY_CODE_HASH = "39446c74dc43c8b824b03d9495d7ee9251c6ac03b7fec1834332507ab7d19294";
 
 export const REGISTRY_CODE_MISMATCH =
   "This registry is not the current PassGram contract. Registration and payments stay closed until this source is deployed.";

@@ -30,7 +30,7 @@ function privateKey(seed: Buffer) {
   });
 }
 
-/** Detached Ed25519 signature of the 32-byte cell hash. Matches Tact checkSignature. */
+/** Detached Ed25519 signature of the 32-byte cell hash. The registry checks this signature. */
 export function signAuthorizationHash(seed: Buffer, hash: Buffer): Buffer {
   if (seed.length !== 32 || hash.length !== 32) throw new OwnerKeyError();
   return crypto.sign(null, hash, privateKey(seed));

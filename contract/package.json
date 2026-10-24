@@ -7,8 +7,8 @@
   },
   "type": "module",
   "scripts": {
-    "build": "tact --config ./tact.config.json",
-    "test": "node --test tests/split.test.mjs tests/codehash.test.mjs && node --import tsx --test tests/registry.sandbox.ts",
+    "build": "npx @ton/tolk-js --output-json build/tolk-registry.json contracts/passgram_registry.tolk",
+    "test": "npm run build && node --test tests/split.test.mjs tests/codehash.test.mjs && node --import tsx --test tests/registry.sandbox.ts",
     "deploy:testnet": "tsx scripts/deploy-testnet.ts",
     "deploy:mainnet": "tsx scripts/deploy-mainnet.ts",
     "test:testnet": "tsx scripts/test-registry-testnet.ts"
@@ -20,9 +20,9 @@
     "dotenv": "^16.4.7"
   },
   "devDependencies": {
-    "@tact-lang/compiler": "^1.6.0",
     "@ton/sandbox": "^0.45.0",
     "@ton/test-utils": "^0.12.0",
+    "@ton/tolk-js": "^1.5.0",
     "tsx": "^4.19.3",
     "typescript": "^5.9.2"
   }

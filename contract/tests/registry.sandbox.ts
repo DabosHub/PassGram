@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Address, beginCell, toNano, type Transaction } from "@ton/core";
+import { Address, beginCell, Cell, toNano, type Transaction } from "@ton/core";
 import { keyPairFromSeed, sign } from "@ton/crypto";
 import { Blockchain, type SandboxContract, type TreasuryContract } from "@ton/sandbox";
-import { PassGramRegistry } from "../build/PassGramRegistry_PassGramRegistry.ts";
+import { tolkRegistryInit } from "../tolkInit.ts";
 
 const PRICE = 1_000_000n;
 const DURATION = 30 * 86_400;
@@ -15,7 +15,7 @@ const JETTON_TRANSFER = 0x0f8a7ea5;
 
 type World = {
   blockchain: Blockchain;
-  registry: SandboxContract<PassGramRegistry>;
+  registry: { address: Address };
   owner: SandboxContract<TreasuryContract>;
   treasury: SandboxContract<TreasuryContract>;
   usdtMaster: SandboxContract<TreasuryContract>;
@@ -178,12 +178,64 @@ function masterWalletReply(wallet: Address, owner: Address | null) {
   return body.storeBit(true).storeRef(beginCell().storeAddress(owner).endCell()).endCell();
 }
 
+function discoverBody(queryId = 0n): Cell {
+  return beginCell().storeUint(0x55534457, 32).storeUint(queryId, 64).endCell();
+}
+
+function registerMessage(input: {
+  communityId: bigint;
+  creator: Address;
+  payout: Address;
+  price?: bigint;
+  durationSeconds?: number;
+  platform?: Address | null;
+  communityReferralBps?: number;
+  accessMode?: number;
+  authorization: Buffer;
+}): Cell {
+  const tail = beginCell();
+  if (input.platform) tail.storeAddress(input.platform);
+  else tail.storeAddress(null);
+  tail
+    .storeUint(input.communityReferralBps ?? 0, 16)
+    .storeUint(input.accessMode ?? 0, 8)
+    .storeBuffer(input.authorization);
+  return beginCell()
+    .storeUint(0x52454743, 32)
+    .storeUint(input.communityId, 64)
+    .storeAddress(input.creator)
+    .storeAddress(input.payout)
+    .storeCoins(input.price ?? PRICE)
+    .storeUint(input.durationSeconds ?? DURATION, 32)
+    .storeRef(tail.endCell())
+    .endCell();
+}
+
+function rotateBody(newKey: bigint, validUntil: number, authorization: Buffer): Cell {
+  return beginCell()
+    .storeUint(0x524f574b, 32)
+    .storeUint(newKey, 256)
+    .storeUint(validUntil, 32)
+    .storeBuffer(authorization)
+    .endCell();
+}
+
+async function readUsdtWallet(world: World): Promise<Address | null> {
+  const result = await world.blockchain.provider(world.registry.address).get("usdtJettonWallet", []);
+  return result.stack.readAddressOpt();
+}
+
+async function readOwnerKey(world: World): Promise<bigint> {
+  const result = await world.blockchain.provider(world.registry.address).get("ownerPublicKey", []);
+  return result.stack.readBigNumber();
+}
+
 async function acceptUsdtWallet(world: World, wallet: Address) {
-  const discovered = await world.registry.send(
-    world.owner.getSender(),
-    { value: toNano("0.08") },
-    { $$type: "DiscoverUsdtJettonWallet", queryId: 0n },
-  );
+  const discovered = await world.owner.send({
+    to: world.registry.address,
+    value: toNano("0.08"),
+    body: discoverBody(),
+  });
   assert.equal(exitCode(registryTransaction(discovered.transactions, world.registry.address)), 0);
   const accepted = await world.usdtMaster.send({
     to: world.registry.address,
@@ -207,15 +259,19 @@ async function boot(input: { bindUsdt?: boolean } = {}): Promise<World> {
   const other = await blockchain.treasury("other");
   const replacement = await blockchain.treasury("replacement");
   const keys = keyPairFromSeed(Buffer.alloc(32, 9));
-  const registry = blockchain.openContract(
-    await PassGramRegistry.fromInit(
-      owner.address,
-      treasury.address,
-      usdtMaster.address,
-      BigInt(`0x${keys.publicKey.toString("hex")}`),
-    ),
-  );
-  const deployed = await registry.send(owner.getSender(), { value: toNano("0.5") }, { $$type: "Deploy", queryId: 0n });
+  const init = tolkRegistryInit({
+    owner: owner.address,
+    treasury: treasury.address,
+    usdtMaster: usdtMaster.address,
+    ownerPublicKey: BigInt(`0x${keys.publicKey.toString("hex")}`),
+  });
+  const registry = { address: init.address };
+  const deployed = await owner.send({
+    to: registry.address,
+    value: toNano("0.5"),
+    init,
+    body: beginCell().endCell(),
+  });
   assert.equal(exitCode(registryTransaction(deployed.transactions, registry.address)), 0);
   const world = {
     blockchain,
@@ -234,7 +290,7 @@ async function boot(input: { bindUsdt?: boolean } = {}): Promise<World> {
   if (input.bindUsdt !== false) {
     await acceptUsdtWallet(world, jettonWallet.address);
   }
-  const funded = await registry.send(owner.getSender(), { value: toNano("5") }, null);
+  const funded = await owner.send({ to: registry.address, value: toNano("5"), body: beginCell().endCell() });
   assert.equal(exitCode(registryTransaction(funded.transactions, registry.address)), 0);
   return world;
 }
@@ -242,19 +298,15 @@ async function boot(input: { bindUsdt?: boolean } = {}): Promise<World> {
 async function register(world: World, input: { communityId?: bigint; accessMode?: bigint; creator?: SandboxContract<TreasuryContract>; platform?: Address | null; contract?: Address } = {}) {
   const creator = input.creator ?? world.creator;
   const communityId = input.communityId ?? COMMUNITY;
-  return world.registry.send(
-    creator.getSender(),
-    { value: toNano("0.08") },
-    {
-      $$type: "RegisterCommunity",
+  return creator.send({
+    to: world.registry.address,
+    value: toNano("0.08"),
+    body: registerMessage({
       communityId,
       creator: creator.address,
       payout: creator.address,
-      price: PRICE,
-      durationSeconds: BigInt(DURATION),
-      platformMarketer: input.platform === undefined ? null : input.platform,
-      communityReferralBps: 0n,
-      accessMode: input.accessMode ?? 0n,
+      platform: input.platform === undefined ? null : input.platform,
+      accessMode: Number(input.accessMode ?? 0n),
       authorization: authorization({
         registry: world.registry.address,
         communityId,
@@ -267,8 +319,8 @@ async function register(world: World, input: { communityId?: bigint; accessMode?
         platform: input.platform === undefined ? null : input.platform,
         accessMode: Number(input.accessMode ?? 0n),
       }),
-    },
-  );
+    }),
+  });
 }
 
 async function pay(
@@ -283,56 +335,52 @@ async function pay(
   },
 ) {
   const subscriber = input.subscriber ?? world.subscriber;
-  return world.registry.send(
-    world.jettonWallet.getSender(),
-    { value: toNano("0.05") },
-    {
-      $$type: "JettonTransferNotification",
-      queryId: 1n,
-      amount: input.amount,
-      sender: subscriber.address,
-      forwardPayload: subscribePayload({
-        registry: world.registry.address,
-        communityId: input.communityId ?? COMMUNITY,
-        subscriber: subscriber.address,
-        payout: input.payout,
-        validUntil: input.validUntil,
-        secretKey: world.keys.secretKey,
-        authorization: input.authorization,
-      }),
-    },
-  );
+  return world.jettonWallet.send({
+    to: world.registry.address,
+    value: toNano("0.05"),
+    body: beginCell()
+      .storeUint(0x7362d09c, 32)
+      .storeUint(1, 64)
+      .storeCoins(input.amount)
+      .storeAddress(subscriber.address)
+      .storeSlice(
+        subscribePayload({
+          registry: world.registry.address,
+          communityId: input.communityId ?? COMMUNITY,
+          subscriber: subscriber.address,
+          payout: input.payout,
+          validUntil: input.validUntil,
+          secretKey: world.keys.secretKey,
+          authorization: input.authorization,
+        }),
+      )
+      .endCell(),
+  });
 }
 
 test("registration requires this contract in the owner signature and accepts the USDT wallet once", async () => {
   const world = await boot();
-  const again = await world.registry.send(
-    world.owner.getSender(),
-    { value: toNano("0.08") },
-    { $$type: "DiscoverUsdtJettonWallet", queryId: 1n },
-  );
-  assert.equal(exitCode(registryTransaction(again.transactions, world.registry.address)), 50163);
+  const again = await world.owner.send({
+    to: world.registry.address,
+    value: toNano("0.08"),
+    body: discoverBody(1n),
+  });
+  assert.equal(exitCode(registryTransaction(again.transactions, world.registry.address)), 101);
 
   const otherContract = world.other.address;
   const foreign = await register(world, { contract: otherContract });
-  assert.equal(exitCode(registryTransaction(foreign.transactions, world.registry.address)), 45378);
+  assert.equal(exitCode(registryTransaction(foreign.transactions, world.registry.address)), 105);
 
   const gated = await register(world, { accessMode: 1n });
-  assert.equal(exitCode(registryTransaction(gated.transactions, world.registry.address)), 11787);
+  assert.equal(exitCode(registryTransaction(gated.transactions, world.registry.address)), 111);
 
-  const wrongPrice = await world.registry.send(
-    world.creator.getSender(),
-    { value: toNano("0.08") },
-    {
-      $$type: "RegisterCommunity",
+  const wrongPrice = await world.creator.send({
+    to: world.registry.address,
+    value: toNano("0.08"),
+    body: registerMessage({
       communityId: COMMUNITY,
       creator: world.creator.address,
       payout: world.creator.address,
-      price: PRICE,
-      durationSeconds: BigInt(DURATION),
-      platformMarketer: null,
-      communityReferralBps: 0n,
-      accessMode: 0n,
       authorization: authorization({
         registry: world.registry.address,
         communityId: COMMUNITY,
@@ -340,23 +388,18 @@ test("registration requires this contract in the owner signature and accepts the
         secretKey: world.keys.secretKey,
         price: PRICE + 1n,
       }),
-    },
-  );
-  assert.equal(exitCode(registryTransaction(wrongPrice.transactions, world.registry.address)), 45378);
+    }),
+  });
+  assert.equal(exitCode(registryTransaction(wrongPrice.transactions, world.registry.address)), 105);
 
-  const wrongMarketer = await world.registry.send(
-    world.creator.getSender(),
-    { value: toNano("0.08") },
-    {
-      $$type: "RegisterCommunity",
+  const wrongMarketer = await world.creator.send({
+    to: world.registry.address,
+    value: toNano("0.08"),
+    body: registerMessage({
       communityId: COMMUNITY,
       creator: world.creator.address,
       payout: world.creator.address,
-      price: PRICE,
-      durationSeconds: BigInt(DURATION),
-      platformMarketer: world.marketer.address,
-      communityReferralBps: 0n,
-      accessMode: 0n,
+      platform: world.marketer.address,
       authorization: authorization({
         registry: world.registry.address,
         communityId: COMMUNITY,
@@ -364,21 +407,21 @@ test("registration requires this contract in the owner signature and accepts the
         secretKey: world.keys.secretKey,
         platform: null,
       }),
-    },
-  );
-  assert.equal(exitCode(registryTransaction(wrongMarketer.transactions, world.registry.address)), 45378);
+    }),
+  });
+  assert.equal(exitCode(registryTransaction(wrongMarketer.transactions, world.registry.address)), 105);
 
   const created = await register(world);
   const createdTx = registryTransaction(created.transactions, world.registry.address);
   assert.equal(exitCode(createdTx), 0);
   assert.equal(externalOps(createdTx).includes(0x43524547), true);
   const duplicate = await register(world);
-  assert.equal(exitCode(registryTransaction(duplicate.transactions, world.registry.address)), 3327);
+  assert.equal(exitCode(registryTransaction(duplicate.transactions, world.registry.address)), 110);
 });
 
 test("only the USDT master can bind this contract's jetton wallet", async () => {
   const world = await boot({ bindUsdt: false });
-  assert.equal(await world.registry.getUsdtJettonWallet(), null);
+  assert.equal(await readUsdtWallet(world), null);
 
   const forged = await world.other.send({
     to: world.registry.address,
@@ -386,7 +429,7 @@ test("only the USDT master can bind this contract's jetton wallet", async () => 
     body: masterWalletReply(world.other.address, world.registry.address),
   });
   assert.notEqual(exitCode(registryTransaction(forged.transactions, world.registry.address)), 0);
-  assert.equal(await world.registry.getUsdtJettonWallet(), null);
+  assert.equal(await readUsdtWallet(world), null);
 
   const otherOwner = await world.usdtMaster.send({
     to: world.registry.address,
@@ -394,10 +437,10 @@ test("only the USDT master can bind this contract's jetton wallet", async () => 
     body: masterWalletReply(world.other.address, world.other.address),
   });
   assert.notEqual(exitCode(registryTransaction(otherOwner.transactions, world.registry.address)), 0);
-  assert.equal(await world.registry.getUsdtJettonWallet(), null);
+  assert.equal(await readUsdtWallet(world), null);
 
   await acceptUsdtWallet(world, world.jettonWallet.address);
-  const bound = await world.registry.getUsdtJettonWallet();
+  const bound = await readUsdtWallet(world);
   assert.ok(bound?.equals(world.jettonWallet.address));
 });
 
@@ -415,53 +458,42 @@ test("the owner wallet can replace the server key, and the old key stops working
     secretKey: world.keys.secretKey,
   });
 
-  const stranger = await world.registry.send(
-    world.other.getSender(),
-    { value: toNano("0.05") },
-    { $$type: "RotateOwnerKey", newKey: nextKey, validUntil: BigInt(validUntil), authorization: signature },
-  );
+  const stranger = await world.other.send({
+    to: world.registry.address,
+    value: toNano("0.05"),
+    body: rotateBody(nextKey, validUntil, signature),
+  });
   assert.notEqual(exitCode(registryTransaction(stranger.transactions, world.registry.address)), 0);
 
-  const unsigned = await world.registry.send(
-    world.owner.getSender(),
-    { value: toNano("0.05") },
-    {
-      $$type: "RotateOwnerKey",
-      newKey: nextKey,
-      validUntil: BigInt(validUntil),
-      authorization: Buffer.alloc(64, 7),
-    },
-  );
+  const unsigned = await world.owner.send({
+    to: world.registry.address,
+    value: toNano("0.05"),
+    body: rotateBody(nextKey, validUntil, Buffer.alloc(64, 7)),
+  });
   assert.notEqual(exitCode(registryTransaction(unsigned.transactions, world.registry.address)), 0);
-  assert.equal(await world.registry.getOwnerPublicKey(), BigInt(`0x${world.keys.publicKey.toString("hex")}`));
+  assert.equal(await readOwnerKey(world), BigInt(`0x${world.keys.publicKey.toString("hex")}`));
 
-  const rotated = await world.registry.send(
-    world.owner.getSender(),
-    { value: toNano("0.05") },
-    { $$type: "RotateOwnerKey", newKey: nextKey, validUntil: BigInt(validUntil), authorization: signature },
-  );
+  const rotated = await world.owner.send({
+    to: world.registry.address,
+    value: toNano("0.05"),
+    body: rotateBody(nextKey, validUntil, signature),
+  });
   const rotatedTx = registryTransaction(rotated.transactions, world.registry.address);
   assert.equal(exitCode(rotatedTx), 0);
   assert.ok(externalOps(rotatedTx).includes(0x4f4b5254));
-  assert.equal(await world.registry.getOwnerPublicKey(), nextKey);
+  assert.equal(await readOwnerKey(world), nextKey);
 
   const stale = await register(world);
   assert.notEqual(exitCode(registryTransaction(stale.transactions, world.registry.address)), 0);
 
   const creator = world.creator;
-  const fresh = await world.registry.send(
-    creator.getSender(),
-    { value: toNano("0.08") },
-    {
-      $$type: "RegisterCommunity",
+  const fresh = await creator.send({
+    to: world.registry.address,
+    value: toNano("0.08"),
+    body: registerMessage({
       communityId: COMMUNITY,
       creator: creator.address,
       payout: creator.address,
-      price: PRICE,
-      durationSeconds: BigInt(DURATION),
-      platformMarketer: null,
-      communityReferralBps: 0n,
-      accessMode: 0n,
       authorization: authorization({
         registry: world.registry.address,
         communityId: COMMUNITY,
@@ -472,8 +504,8 @@ test("the owner wallet can replace the server key, and the old key stops working
         durationSeconds: DURATION,
         platform: null,
       }),
-    },
-  );
+    }),
+  });
   assert.equal(exitCode(registryTransaction(fresh.transactions, world.registry.address)), 0);
 });
 
@@ -523,11 +555,11 @@ test("an amount above the price returns the extra and splits the price", async (
 test("the payer cannot collect the community commission, and a renewal keeps the lock", async () => {
   const world = await boot();
   assert.equal(exitCode(registryTransaction((await register(world)).transactions, world.registry.address)), 0);
-  const opened = await world.registry.send(
-    world.creator.getSender(),
-    { value: toNano("0.05") },
-    { $$type: "SetCommunityReferral", queryId: 0n, communityId: COMMUNITY, communityReferralBps: 1000n },
-  );
+  const opened = await world.creator.send({
+    to: world.registry.address,
+    value: toNano("0.05"),
+    body: beginCell().storeUint(0x53435246, 32).storeUint(0, 64).storeUint(COMMUNITY, 64).storeUint(1000, 16).endCell(),
+  });
   assert.equal(exitCode(registryTransaction(opened.transactions, world.registry.address)), 0);
 
   const selfPaid = await pay(world, { amount: PRICE, payout: world.subscriber.address });
@@ -554,19 +586,13 @@ test("the payer cannot collect the community commission, and a renewal keeps the
 
 test("RegisterCommunity rejects a receiving wallet that is not the creator", async () => {
   const world = await boot();
-  const rejected = await world.registry.send(
-    world.creator.getSender(),
-    { value: toNano("0.08") },
-    {
-      $$type: "RegisterCommunity",
+  const rejected = await world.creator.send({
+    to: world.registry.address,
+    value: toNano("0.08"),
+    body: registerMessage({
       communityId: COMMUNITY,
       creator: world.creator.address,
       payout: world.replacement.address,
-      price: PRICE,
-      durationSeconds: BigInt(DURATION),
-      platformMarketer: null,
-      communityReferralBps: 0n,
-      accessMode: 0n,
       authorization: authorization({
         registry: world.registry.address,
         communityId: COMMUNITY,
@@ -574,8 +600,8 @@ test("RegisterCommunity rejects a receiving wallet that is not the creator", asy
         secretKey: world.keys.secretKey,
         payout: world.replacement.address,
       }),
-    },
-  );
+    }),
+  });
   assert.notEqual(exitCode(registryTransaction(rejected.transactions, world.registry.address)), 0);
   assert.equal(exitCode(registryTransaction((await register(world)).transactions, world.registry.address)), 0);
 });
@@ -587,30 +613,25 @@ test("UpdateCommunity changes the price and keeps paying the registering wallet"
   const firstTx = registryTransaction(first.transactions, world.registry.address);
   assert.equal(jettonPayouts(firstTx).find((item) => item.destination.equals(world.creator.address))?.amount, 975_000n);
 
-  const stranger = await world.registry.send(
-    world.subscriber.getSender(),
-    { value: toNano("0.05") },
-    {
-      $$type: "UpdateCommunity",
-      queryId: 0n,
-      communityId: COMMUNITY,
-      price: 2_000_000n,
-      durationSeconds: BigInt(DURATION),
-    },
-  );
-  assert.equal(exitCode(registryTransaction(stranger.transactions, world.registry.address)), 25517);
+  const updateBody = beginCell()
+    .storeUint(0x55504443, 32)
+    .storeUint(0, 64)
+    .storeUint(COMMUNITY, 64)
+    .storeCoins(2_000_000n)
+    .storeUint(DURATION, 32)
+    .endCell();
+  const stranger = await world.subscriber.send({
+    to: world.registry.address,
+    value: toNano("0.05"),
+    body: updateBody,
+  });
+  assert.equal(exitCode(registryTransaction(stranger.transactions, world.registry.address)), 118);
 
-  const updated = await world.registry.send(
-    world.creator.getSender(),
-    { value: toNano("0.05") },
-    {
-      $$type: "UpdateCommunity",
-      queryId: 0n,
-      communityId: COMMUNITY,
-      price: 2_000_000n,
-      durationSeconds: BigInt(DURATION),
-    },
-  );
+  const updated = await world.creator.send({
+    to: world.registry.address,
+    value: toNano("0.05"),
+    body: updateBody,
+  });
   const updatedTx = registryTransaction(updated.transactions, world.registry.address);
   assert.equal(exitCode(updatedTx), 0);
   assert.equal(externalOps(updatedTx).includes(0x43555044), true);
@@ -623,11 +644,11 @@ test("UpdateCommunity changes the price and keeps paying the registering wallet"
 test("a paused community returns the payment", async () => {
   const world = await boot();
   assert.equal(exitCode(registryTransaction((await register(world)).transactions, world.registry.address)), 0);
-  const paused = await world.registry.send(
-    world.creator.getSender(),
-    { value: toNano("0.05") },
-    { $$type: "SetCommunityPaused", queryId: 0n, communityId: COMMUNITY, paused: true },
-  );
+  const paused = await world.creator.send({
+    to: world.registry.address,
+    value: toNano("0.05"),
+    body: beginCell().storeUint(0x53435053, 32).storeUint(0, 64).storeUint(COMMUNITY, 64).storeBit(true).endCell(),
+  });
   assert.equal(exitCode(registryTransaction(paused.transactions, world.registry.address)), 0);
   const result = await pay(world, { amount: PRICE });
   const tx = registryTransaction(result.transactions, world.registry.address);
@@ -639,11 +660,11 @@ test("a paused community returns the payment", async () => {
 test("a first payment without the owner referral signature is returned and does not lock", async () => {
   const world = await boot();
   assert.equal(exitCode(registryTransaction((await register(world)).transactions, world.registry.address)), 0);
-  const opened = await world.registry.send(
-    world.creator.getSender(),
-    { value: toNano("0.05") },
-    { $$type: "SetCommunityReferral", queryId: 0n, communityId: COMMUNITY, communityReferralBps: 1000n },
-  );
+  const opened = await world.creator.send({
+    to: world.registry.address,
+    value: toNano("0.05"),
+    body: beginCell().storeUint(0x53435246, 32).storeUint(0, 64).storeUint(COMMUNITY, 64).storeUint(1000, 16).endCell(),
+  });
   assert.equal(exitCode(registryTransaction(opened.transactions, world.registry.address)), 0);
 
   const forged = await pay(world, {
@@ -716,18 +737,18 @@ test("a forged JettonExcesses cannot delete a bounced payout", async () => {
   });
   assert.equal(exitCode(registryTransaction(bounced.transactions, world.registry.address)), 0);
 
-  const forged = await world.registry.send(
-    world.subscriber.getSender(),
-    { value: toNano("0.02") },
-    { $$type: "JettonExcesses", queryId: creator.queryId },
-  );
+  const forged = await world.subscriber.send({
+    to: world.registry.address,
+    value: toNano("0.02"),
+    body: beginCell().storeUint(0xd53276db, 32).storeUint(creator.queryId, 64).endCell(),
+  });
   assert.notEqual(exitCode(registryTransaction(forged.transactions, world.registry.address)), 0);
 
-  const retried = await world.registry.send(
-    world.owner.getSender(),
-    { value: toNano("0.05") },
-    { $$type: "RetryPayouts", queryId: 0n },
-  );
+  const retried = await world.owner.send({
+    to: world.registry.address,
+    value: toNano("0.05"),
+    body: beginCell().storeUint(0x52545259, 32).storeUint(0, 64).endCell(),
+  });
   const again = jettonPayouts(registryTransaction(retried.transactions, world.registry.address));
   assert.equal(again.find((item) => item.destination.equals(world.creator.address))?.amount, creator.amount);
 });
@@ -742,11 +763,11 @@ test("a bounced payout is sent again without charging the subscriber", async () 
   assert.ok(creator);
   assert.ok(treasury);
 
-  const accepted = await world.registry.send(
-    world.jettonWallet.getSender(),
-    { value: toNano("0.02") },
-    { $$type: "JettonExcesses", queryId: treasury.queryId },
-  );
+  const accepted = await world.jettonWallet.send({
+    to: world.registry.address,
+    value: toNano("0.02"),
+    body: beginCell().storeUint(0xd53276db, 32).storeUint(treasury.queryId, 64).endCell(),
+  });
   assert.equal(exitCode(registryTransaction(accepted.transactions, world.registry.address)), 0);
 
   const bounced = await world.blockchain.sendMessage({
@@ -772,11 +793,11 @@ test("a bounced payout is sent again without charging the subscriber", async () 
   });
   assert.equal(exitCode(registryTransaction(bounced.transactions, world.registry.address)), 0);
 
-  const retried = await world.registry.send(
-    world.owner.getSender(),
-    { value: toNano("0.05") },
-    { $$type: "RetryPayouts", queryId: 0n },
-  );
+  const retried = await world.owner.send({
+    to: world.registry.address,
+    value: toNano("0.05"),
+    body: beginCell().storeUint(0x52545259, 32).storeUint(0, 64).endCell(),
+  });
   const retryTx = registryTransaction(retried.transactions, world.registry.address);
   assert.equal(exitCode(retryTx), 0);
   const again = jettonPayouts(retryTx);

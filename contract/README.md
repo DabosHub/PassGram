@@ -1,6 +1,6 @@
 # PassGram TON contracts
 
-Tact contracts for USDT Jetton subscription payments with **on-chain** fee and community-referral splits.
+Tolk 1.5.0 registry for USDT Jetton subscription payments with **on-chain** fee and community-referral splits.
 
 ## Contracts
 
@@ -39,7 +39,7 @@ Tact contracts for USDT Jetton subscription payments with **on-chain** fee and c
 1. `sender()` is the creator address in the message.
 2. The owner's Ed25519 key has signed the cell `AUTH` (`0x41555448`) + this contract's address + `communityId` + the creator wallet, plus a reference holding the payout, price, duration, PassGram referrer (one bit, then the address when present), referral rate, and access mode. That 64-byte signature travels in the message. Changing any of those fields makes the signature invalid.
 
-A successful registration emits `CommunityRegistered` (`CREG` / `0x43524547`) with the community id, creator wallet, price, duration, PassGram referrer, referral rate, and access mode. A later price or duration change emits `CommunityUpdated` (`CUPD` / `0x43555044`). The public key is stored at deploy (`PassGramRegistry.init`). The owner wallet can replace it with `RotateOwnerKey` (`ROWK` / `0x524f574b`): the current key signs this contract, the new key, and an expiry within one day, and the owner address sends that message. A copied server secret cannot rotate the key by itself. The contract emits `OwnerKeyRotated` (`OKRT` / `0x4f4b5254`). The Mini App asks the server for the signature after the community row exists and the creator wallet is connected. The server signs only for the Telegram user who owns that community id. Set `PASSGRAM_OWNER_SECRET` to the 32-byte seed (64 hex characters) of that same key. It is not a link-registration key and it does not move USDT.
+A successful registration emits `CommunityRegistered` (`CREG` / `0x43524547`) with the community id, creator wallet, price, duration, PassGram referrer, referral rate, and access mode. A later price or duration change emits `CommunityUpdated` (`CUPD` / `0x43555044`). The public key is stored in the contract's initial data. The owner wallet can replace it with `RotateOwnerKey` (`ROWK` / `0x524f574b`): the current key signs this contract, the new key, and an expiry within one day, and the owner address sends that message. A copied server secret cannot rotate the key by itself. The contract emits `OwnerKeyRotated` (`OKRT` / `0x4f4b5254`). The Mini App asks the server for the signature after the community row exists and the creator wallet is connected. The server signs only for the Telegram user who owns that community id. Set `PASSGRAM_OWNER_SECRET` to the 32-byte seed (64 hex characters) of that same key. It is not a link-registration key and it does not move USDT.
 
 ## USDT Jetton masters
 

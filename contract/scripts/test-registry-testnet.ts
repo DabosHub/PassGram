@@ -14,17 +14,6 @@ import {
   WalletContractV5R1,
   internal,
 } from "@ton/ton";
-import {
-  PassGramRegistry,
-  storeRegisterCommunity,
-  storeSetCommunityReferral,
-  storeDiscoverUsdtJettonWallet,
-  storeJettonTransferNotification,
-  type RegisterCommunity,
-  type SetCommunityReferral,
-  type DiscoverUsdtJettonWallet,
-  type JettonTransferNotification,
-} from "../build/PassGramRegistry_PassGramRegistry.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 loadEnv({ path: resolve(__dirname, "../.env") });
@@ -150,7 +139,11 @@ async function main() {
   const owner = walletContract.address;
   const treasury = Address.parse(process.env.TREASURY_ADDRESS!.trim());
   const registryAddr = Address.parse(registryRaw);
-  const registry = client.open(PassGramRegistry.fromAddress(registryAddr));
+  const readInt = async (method: string, args: { type: "int"; value: bigint }[] = []) =>
+    (await client.runMethod(registryAddr, method, args)).stack.readBigNumber();
+  const readAddress = async (method: string) => (await client.runMethod(registryAddr, method)).stack.readAddress();
+  const readAddressOpt = async (method: string) =>
+    (await client.runMethod(registryAddr, method)).stack.readAddressOpt();
 
   // Secondary address for community-referrer / fake-sender tests (treasury)
   const communityReferrer = treasury;
@@ -161,31 +154,31 @@ async function main() {
 
   // ── Getters ──────────────────────────────────────────────
   {
-    const fee = await withRetry("platformFeeBps", () => registry.getPlatformFeeBps());
+    const fee = await withRetry("platformFeeBps", () => readInt("platformFeeBps"));
     fee === 250n
       ? pass("get platformFeeBps", `${fee}`)
       : fail("get platformFeeBps", `expected 250 got ${fee}`);
   }
   {
-    const v = await withRetry("affiliateShare", () => registry.getAffiliateShareOfPlatformBps());
+    const v = await withRetry("affiliateShare", () => readInt("affiliateShareOfPlatformBps"));
     v === 2000n
       ? pass("get affiliateShareOfPlatformBps", `${v}`)
       : fail("get affiliateShareOfPlatformBps", `expected 2000 got ${v}`);
   }
   {
-    const v = await withRetry("maxCommunityReferralBps", () => registry.getMaxCommunityReferralBps());
+    const v = await withRetry("maxCommunityReferralBps", () => readInt("maxCommunityReferralBps"));
     v === 5000n
       ? pass("get maxCommunityReferralBps", `${v}`)
       : fail("get maxCommunityReferralBps", `expected 5000 got ${v}`);
   }
   {
-    const v = await withRetry("treasury", () => registry.getTreasury());
+    const v = await withRetry("treasury", () => readAddress("treasury"));
     v.equals(treasury)
       ? pass("get treasury", v.toString())
       : fail("get treasury", `expected ${treasury} got ${v}`);
   }
   {
-    const master = await withRetry("usdtMaster", () => registry.getUsdtJettonMaster());
+    const master = await withRetry("usdtMaster", () => readAddress("usdtJettonMaster"));
     const envMaster = Address.parse(
       process.env.NEXT_PUBLIC_USDT_JETTON ||
         process.env.USDT_JETTON_MASTER ||
@@ -196,14 +189,14 @@ async function main() {
       : fail("get usdtJettonMaster", `expected ${envMaster} got ${master}`);
   }
   {
-    const w = await withRetry("usdtWallet", () => registry.getUsdtJettonWallet());
+    const w = await withRetry("usdtWallet", () => readAddressOpt("usdtJettonWallet"));
     w
       ? pass("get usdtJettonWallet", w.toString())
       : fail("get usdtJettonWallet", "null — not bound");
   }
   {
     const before = await withRetry("communityReferralBps(unknown)", () =>
-      registry.getCommunityReferralBps(999999999n),
+      readInt("communityReferralBps", [{ type: "int", value: 999999999n }]),
     );
     before === 0n
       ? pass("get communityReferralBps (unknown)", "0")
@@ -255,18 +248,17 @@ async function main() {
         .storeAddress(owner)
         .storeRef(terms)
         .endCell();
-      const msg: RegisterCommunity = {
-        $$type: "RegisterCommunity",
-        communityId: COMMUNITY_ID,
-        creator: owner,
-        payout: owner,
-        price: PRICE,
-        durationSeconds: BigInt(DURATION),
-        platformMarketer: null,
-        communityReferralBps: 0n,
-        accessMode: 0n,
-        authorization: sign(approved.hash(), keyPair.secretKey),
-      };
+      const signature = sign(approved.hash(), keyPair.secretKey);
+      const tail = beginCell().storeAddress(null).storeUint(0, 16).storeUint(0, 8).storeBuffer(signature).endCell();
+      const body = beginCell()
+        .storeUint(0x52454743, 32)
+        .storeUint(COMMUNITY_ID, 64)
+        .storeAddress(owner)
+        .storeAddress(owner)
+        .storeCoins(PRICE)
+        .storeUint(DURATION, 32)
+        .storeRef(tail)
+        .endCell();
       let seqno = await withRetry("seqno", () => walletContract.getSeqno());
       await withRetry("register", () =>
         sendWalletTransfer(walletContract, wallet, {
@@ -276,14 +268,16 @@ async function main() {
             internal({
               to: registryAddr,
               value: toNano("0.08"),
-              body: beginCell().store(storeRegisterCommunity(msg)).endCell(),
+              body,
               bounce: true,
             }),
           ],
         }),
       );
       await waitSeqno(walletContract, seqno);
-      const bps = await withRetry("readBps", () => registry.getCommunityReferralBps(COMMUNITY_ID));
+      const bps = await withRetry("readBps", () =>
+        readInt("communityReferralBps", [{ type: "int", value: COMMUNITY_ID }]),
+      );
       bps === 0n
         ? pass(name, `community ${COMMUNITY_ID} registered, referralBps=${bps}`)
         : fail(name, `registered but bps=${bps}`);
@@ -296,12 +290,12 @@ async function main() {
   {
     const name = "SetCommunityReferral (1000 bps)";
     try {
-      const msg: SetCommunityReferral = {
-        $$type: "SetCommunityReferral",
-        queryId: 1n,
-        communityId: COMMUNITY_ID,
-        communityReferralBps: 1000n,
-      };
+      const body = beginCell()
+        .storeUint(0x53435246, 32)
+        .storeUint(1, 64)
+        .storeUint(COMMUNITY_ID, 64)
+        .storeUint(1000, 16)
+        .endCell();
       let seqno = await withRetry("seqno", () => walletContract.getSeqno());
       await withRetry("setRef", () =>
         sendWalletTransfer(walletContract, wallet, {
@@ -311,14 +305,16 @@ async function main() {
             internal({
               to: registryAddr,
               value: toNano("0.05"),
-              body: beginCell().store(storeSetCommunityReferral(msg)).endCell(),
+              body,
               bounce: true,
             }),
           ],
         }),
       );
       await waitSeqno(walletContract, seqno);
-      const bps = await withRetry("readBps", () => registry.getCommunityReferralBps(COMMUNITY_ID));
+      const bps = await withRetry("readBps", () =>
+        readInt("communityReferralBps", [{ type: "int", value: COMMUNITY_ID }]),
+      );
       bps === 1000n
         ? pass(name, `communityReferralBps=${bps}`)
         : fail(name, `expected 1000 got ${bps}`);
@@ -331,14 +327,10 @@ async function main() {
   {
     const name = "DiscoverUsdtJettonWallet (already bound)";
     try {
-      const current = await withRetry("usdtWallet", () => registry.getUsdtJettonWallet());
+      const current = await withRetry("usdtWallet", () => readAddressOpt("usdtJettonWallet"));
       if (!current) {
         fail(name, "wallet is null");
       } else {
-        const msg: DiscoverUsdtJettonWallet = {
-          $$type: "DiscoverUsdtJettonWallet",
-          queryId: 0n,
-        };
         let seqno = await withRetry("seqno", () => walletContract.getSeqno());
         await withRetry("rebind", () =>
           sendWalletTransfer(walletContract, wallet, {
@@ -348,14 +340,14 @@ async function main() {
               internal({
                 to: registryAddr,
                 value: toNano("0.1"),
-                body: beginCell().store(storeDiscoverUsdtJettonWallet(msg)).endCell(),
+                body: beginCell().storeUint(0x55534457, 32).storeUint(0, 64).endCell(),
                 bounce: true,
               }),
             ],
           }),
         );
         await waitSeqno(walletContract, seqno);
-        const after = await withRetry("usdtWallet2", () => registry.getUsdtJettonWallet());
+        const after = await withRetry("usdtWallet2", () => readAddressOpt("usdtJettonWallet"));
         after && after.equals(current)
           ? pass(name, after.toString())
           : fail(name, "wallet changed unexpectedly");
@@ -371,22 +363,17 @@ async function main() {
     try {
       // Build a valid-looking subscribe payload, but send from owner (not jetton wallet).
       // Contract must reject; bounce returns TON → seqno still advances.
-      const forward = beginCell()
-        .storeBit(false) // either left = inline
-        .storeUint(0x53554253, 32) // SUBS
+      const body = beginCell()
+        .storeUint(0x7362d09c, 32)
+        .storeUint(42, 64)
+        .storeCoins(PRICE)
+        .storeAddress(owner)
+        .storeBit(false)
+        .storeUint(0x53554253, 32)
         .storeUint(COMMUNITY_ID, 64)
-        .storeBit(true) // community payout present
+        .storeBit(true)
         .storeAddress(communityReferrer)
-        .endCell()
-        .beginParse();
-
-      const msg: JettonTransferNotification = {
-        $$type: "JettonTransferNotification",
-        queryId: 42n,
-        amount: PRICE,
-        sender: owner,
-        forwardPayload: forward,
-      };
+        .endCell();
 
       const balBefore = await withRetry("bal", () => walletContract.getBalance());
       let seqno = await withRetry("seqno", () => walletContract.getSeqno());
@@ -398,7 +385,7 @@ async function main() {
             internal({
               to: registryAddr,
               value: toNano("0.1"),
-              body: beginCell().store(storeJettonTransferNotification(msg)).endCell(),
+              body,
               bounce: true,
             }),
           ],

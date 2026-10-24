@@ -9,9 +9,9 @@ export type TonTraceEvent = {
   bodyBase64?: string;
 };
 
-/** Opcode of Tact `SubscriptionPaid` event (see contract ABI). */
+/** Opcode of the registry `SubscriptionPaid` event. */
 export const SUBSCRIPTION_PAID_OP = 1258072203;
-/** Opcode of Tact `CommunityUpdated` ("CUPD"). */
+/** Opcode of the registry `CommunityUpdated` event ("CUPD"). */
 export const COMMUNITY_UPDATED_OP = 0x43555044;
 
 export type ParsedSubscriptionPaid = {

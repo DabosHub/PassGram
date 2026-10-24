@@ -25,13 +25,7 @@ import {
   WalletContractV5R1,
   internal,
 } from "@ton/ton";
-import {
-  PassGramRegistry,
-  storeDeploy,
-  storeDiscoverUsdtJettonWallet,
-  type Deploy,
-  type DiscoverUsdtJettonWallet,
-} from "../build/PassGramRegistry_PassGramRegistry.js";
+import { tolkRegistryInit } from "../tolkInit.ts";
 
 type DeployWallet = WalletContractV5R1 | WalletContractV4 | WalletContractV3R2;
 
@@ -126,13 +120,7 @@ async function main() {
   if (network === "mainnet" && process.env.PASSGRAM_DEPLOY_MAINNET !== "1") {
     throw new Error("Refusing to deploy to mainnet. Set PASSGRAM_DEPLOY_MAINNET=1 to publish the current source.");
   }
-  const builtCodeHash = Cell.fromBoc(
-    readFileSync(resolve(__dirname, "../build/PassGramRegistry_PassGramRegistry.code.boc")),
-  )[0]?.hash().toString("hex");
   const acceptedCodeHash = readFileSync(resolve(__dirname, "../registry.codehash"), "utf8").trim().toLowerCase();
-  if (!builtCodeHash || builtCodeHash !== acceptedCodeHash) {
-    throw new Error("The built registry code does not match contract/registry.codehash. Rebuild, update that hash, and deploy this source only.");
-  }
   const defaultUsdt = network === "mainnet" ? DEFAULT_MAINNET_USDT : DEFAULT_TESTNET_USDT;
   const usdtMaster = Address.parse(process.env.USDT_JETTON_MASTER?.trim() || defaultUsdt);
   if (network === "mainnet" && usdtMaster.equals(Address.parse(DEFAULT_TESTNET_USDT))) {
@@ -177,7 +165,6 @@ async function main() {
   const treasury = Address.parse(treasuryRaw);
 
   console.log("Network:    ", network);
-  console.log("Code hash:  ", acceptedCodeHash);
   console.log("Owner:      ", deployer.toString());
   console.log("Treasury:   ", treasury.toString());
   console.log("USDT master:", usdtMaster.toString());
@@ -194,10 +181,16 @@ async function main() {
   }
 
   const ownerPublicKey = BigInt(`0x${keyPair.publicKey.toString("hex")}`);
-  const registry = await PassGramRegistry.fromInit(deployer, treasury, usdtMaster, ownerPublicKey);
+  const registry = tolkRegistryInit({ owner: deployer, treasury, usdtMaster, ownerPublicKey });
+  const sourceHash = registry.code.hash().toString("hex");
+  if (sourceHash !== acceptedCodeHash) {
+    throw new Error(
+      `Tolk code hash ${sourceHash} does not match contract/registry.codehash (${acceptedCodeHash}).`,
+    );
+  }
+  console.log("Code hash:  ", acceptedCodeHash);
   console.log("Registry:   ", registry.address.toString());
 
-  const opened = client.open(registry);
   const already = await withRetry("isDeployed", () => client.isContractDeployed(registry.address));
   let seqno = await withRetry("getSeqno", () => walletContract.getSeqno());
 
@@ -211,15 +204,8 @@ async function main() {
           internal({
             to: registry.address,
             value: deployAmount,
-            init: registry.init,
-            body: beginCell()
-              .store(
-                storeDeploy({
-                  $$type: "Deploy",
-                  queryId: 0n,
-                } satisfies Deploy),
-              )
-              .endCell(),
+            init: { code: registry.code, data: registry.data },
+            body: beginCell().endCell(),
             bounce: false,
           }),
         ],
@@ -256,7 +242,7 @@ async function main() {
   );
   console.log("USDT wallet:", jettonWallet.toString());
 
-  const bound = await withRetry("getUsdtWallet", () => opened.getUsdtJettonWallet());
+  const bound = await withRetry("getUsdtWallet", () => readUsdtWallet(client, registry.address));
   if (bound && !bound.equals(jettonWallet)) {
     throw new Error(
       `USDT jetton wallet is already set to ${bound.toString()} and cannot be changed. Expected ${jettonWallet.toString()}.`,
@@ -264,10 +250,6 @@ async function main() {
   }
   if (!bound) {
     console.log("Asking the USDT master for this contract's jetton wallet…");
-    const msg: DiscoverUsdtJettonWallet = {
-      $$type: "DiscoverUsdtJettonWallet",
-      queryId: 0n,
-    };
     await withRetry("bindUsdt", () =>
       sendWalletTransfer(walletContract, wallet, {
         secretKey: keyPair.secretKey,
@@ -276,21 +258,21 @@ async function main() {
           internal({
             to: registry.address,
             value: toNano("0.1"),
-            body: beginCell().store(storeDiscoverUsdtJettonWallet(msg)).endCell(),
+            body: beginCell().storeUint(0x55534457, 32).storeUint(0, 64).endCell(),
             bounce: true,
           }),
         ],
       }),
     );
     await waitSeqno(walletContract, seqno);
-    const confirmed = await waitForUsdtWallet(opened, jettonWallet);
+    const confirmed = await waitForUsdtWallet(client, registry.address, jettonWallet);
     console.log("USDT jetton wallet bound:", confirmed.toString());
   } else {
     console.log("USDT jetton wallet already bound.");
   }
 
   const live = await withRetry("getContractState", () => client.getContractState(registry.address));
-  const liveHash = live.code?.hash().toString("hex");
+  const liveHash = hashOfCode(live.code);
   if (liveHash !== acceptedCodeHash) {
     throw new Error(
       `Deployed code hash ${liveHash || "missing"} does not match this source (${acceptedCodeHash}). Do not point the app at this address.`,
@@ -328,13 +310,26 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function hashOfCode(code: Buffer | Cell | null | undefined): string | null {
+  if (!code) return null;
+  if (code instanceof Cell) return code.hash().toString("hex");
+  const cell = Cell.fromBoc(Buffer.from(code))[0];
+  return cell ? cell.hash().toString("hex") : null;
+}
+
+async function readUsdtWallet(client: TonClient, registry: Address): Promise<Address | null> {
+  const result = await client.runMethod(registry, "usdtJettonWallet");
+  return result.stack.readAddressOpt();
+}
+
 async function waitForUsdtWallet(
-  opened: { getUsdtJettonWallet: () => Promise<Address | null> },
+  client: TonClient,
+  registry: Address,
   expected: Address,
 ): Promise<Address> {
   for (let i = 0; i < 30; i++) {
     await sleep(2500);
-    const current = await opened.getUsdtJettonWallet();
+    const current = await readUsdtWallet(client, registry);
     if (current && current.equals(expected)) return current;
     if (current && !current.equals(expected)) {
       throw new Error(

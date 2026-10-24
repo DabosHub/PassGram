@@ -6,13 +6,21 @@ export function AppGate() {
   const [App, setApp] = useState<ComponentType | null>(null);
 
   useEffect(() => {
-    if (document.documentElement.dataset.surface !== "app") return;
     let active = true;
-    void import("@/components/MiniApp").then((mod) => {
-      if (active) setApp(() => mod.MiniApp);
-    });
+    let started = false;
+    function load() {
+      if (!active || started || document.documentElement.dataset.surface !== "app") return;
+      started = true;
+      void import("@/components/MiniApp").then((mod) => {
+        if (active) setApp(() => mod.MiniApp);
+      });
+    }
+    load();
+    const observer = new MutationObserver(load);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-surface"] });
     return () => {
       active = false;
+      observer.disconnect();
     };
   }, []);
 

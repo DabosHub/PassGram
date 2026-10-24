@@ -12,16 +12,25 @@ export const metadata: Metadata = {
   description,
   alternates: { canonical: SITE_URL },
   openGraph: {
-    title,
-    description,
+    title: "Automatic membership management for paid Telegram channels.",
+    description: "Members are added when payment is confirmed. Members are removed when the subscription ends.",
     url: SITE_URL,
     siteName: "PassGram",
     type: "website",
+    images: [
+      {
+        url: "/og.png",
+        width: 1200,
+        height: 630,
+        alt: "Automatic membership management for paid Telegram channels.",
+      },
+    ],
   },
   twitter: {
-    card: "summary",
-    title,
-    description,
+    card: "summary_large_image",
+    title: "Automatic membership management for paid Telegram channels.",
+    description: "Members are added when payment is confirmed. Members are removed when the subscription ends.",
+    images: ["/og.png"],
   },
   robots: { index: true, follow: true },
 };

@@ -28,7 +28,7 @@ import {
   validateCommunityDraft,
 } from "./domain.ts";
 import { computeCommunityAwareSplit } from "./money.ts";
-import { resolveRoute, routeToPath } from "./route.ts";
+import { launchStartParam, resolveRoute, routeToPath } from "./route.ts";
 import { confirmPayment, loadLeaderboard } from "./services/confirmation.ts";
 
 const day = 24 * 60 * 60 * 1000;
@@ -102,6 +102,16 @@ test("deep links and history paths", () => {
     communityReferralCode: null,
     error: null,
   });
+  assert.equal(launchStartParam({ hash: "#tgWebAppStartParam=c_1" }), "c_1");
+  assert.equal(launchStartParam({ search: "?tgWebAppStartParam=c_1" }), "c_1");
+  assert.equal(
+    launchStartParam({
+      hash: `#tgWebAppData=${encodeURIComponent("user=%7B%7D&start_param=c_1&auth_date=1&hash=ab")}`,
+    }),
+    "c_1",
+  );
+  assert.equal(resolveRoute("?tgWebAppStartParam=c_1", "c_1").screen, "community");
+  assert.equal(resolveRoute("?tgWebAppStartParam=c_1", "c_1").communityId, 1);
   assert.equal(resolveRoute("", "c_4").screen, "community");
   assert.equal(resolveRoute("?tab=create", "c_4").screen, "home");
   assert.equal(resolveRoute("?tab=create", "c_4").tab, "create");

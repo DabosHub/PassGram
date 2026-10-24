@@ -17,6 +17,23 @@ const ACCOUNT_PAGES = new Set<AccountPage>(["hub", "analytics", "notifications",
 
 const TABS = new Set<TabId>(["dashboard", "create", "referral"]);
 
+/** Telegram puts startapp in the hash, the query, or inside init data. The SDK value wins when it is already parsed. */
+export function launchStartParam(input: { search?: string; hash?: string; sdkStart?: string | null }): string | null {
+  const sdk = input.sdkStart?.trim();
+  if (sdk) return sdk;
+  const search = new URLSearchParams(stripPrefix(input.search ?? "", "?"));
+  const hash = new URLSearchParams(stripPrefix(input.hash ?? "", "#"));
+  const direct = search.get("tgWebAppStartParam") || hash.get("tgWebAppStartParam") || search.get("startapp");
+  if (direct?.trim()) return direct.trim();
+  const initData = hash.get("tgWebAppData") || search.get("tgWebAppData");
+  const nested = initData ? new URLSearchParams(initData).get("start_param")?.trim() : "";
+  return nested || null;
+}
+
+function stripPrefix(value: string, prefix: string): string {
+  return value.startsWith(prefix) ? value.slice(prefix.length) : value;
+}
+
 export function resolveRoute(search: string, startParam?: string | null): AppRoute {
   const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
   const explicit = ["account", "manage", "subscription", "community", "tab"].some((key) => params.has(key));

@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { resolveRoute, routeToPath, type AppRoute } from "./route";
+import { launchStartParam, resolveRoute, routeToPath, type AppRoute } from "./route";
 
 const home: AppRoute = {
   tab: "dashboard",
@@ -26,14 +26,53 @@ export function RouteProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const start = window.Telegram?.WebApp?.initDataUnsafe.start_param;
-    const initial = resolveRoute(window.location.search, window.location.search ? null : start);
-    if (!window.location.search && start) history.replaceState(null, "", routeToPath(initial));
-    setRoute(initial);
-    setReady(true);
-    const onPop = () => setRoute(resolveRoute(window.location.search, null));
+    let cancelled = false;
+    let attempts = 0;
+    let timer = 0;
+
+    const readStart = () =>
+      launchStartParam({
+        search: window.location.search,
+        hash: window.location.hash,
+        sdkStart: window.Telegram?.WebApp?.initDataUnsafe?.start_param,
+      });
+
+    const settle = () => {
+      if (cancelled) return;
+      const initial = resolveRoute(window.location.search, readStart());
+      const target = routeToPath(initial);
+      const current = `${window.location.pathname}${window.location.search}`;
+      if (target !== current) history.replaceState(null, "", `${target}${window.location.hash}`);
+      setRoute(initial);
+      setReady(true);
+    };
+
+    const tick = () => {
+      if (cancelled) return;
+      const webApp = window.Telegram?.WebApp;
+      const openedFromTelegram =
+        /tgWebApp/.test(`${window.location.hash}${window.location.search}`) ||
+        Boolean(webApp?.initData) ||
+        Boolean(webApp?.platform && webApp.platform !== "unknown");
+      const explicit = ["account", "manage", "subscription", "community", "settings", "tab"].some((key) =>
+        new URLSearchParams(window.location.search.slice(1)).has(key),
+      );
+      if (readStart() || explicit || !openedFromTelegram || attempts >= 20) {
+        settle();
+        return;
+      }
+      attempts += 1;
+      timer = window.setTimeout(tick, 100);
+    };
+
+    tick();
+    const onPop = () => setRoute(resolveRoute(window.location.search, readStart()));
     window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      window.removeEventListener("popstate", onPop);
+    };
   }, []);
 
   const api = useMemo<RouteApi>(

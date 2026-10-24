@@ -259,7 +259,6 @@ export function paymentBlockers(input: {
   if (input.self) reasons.push("You cannot subscribe to your own community.");
   if (!input.communityConfirmed) reasons.push("This community is not confirmed, so payment cannot start.");
   if (!input.contractConfigured) reasons.push("The PassGram registry contract is not configured.");
-  reasons.push("No indexer is running to confirm payment or grant access.");
   return reasons;
 }
 

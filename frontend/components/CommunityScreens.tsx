@@ -21,6 +21,7 @@ import { sendRegistryCall } from "@/lib/ton/send";
 import { buildDemoLastTx } from "@/lib/demoLab";
 import { useDemoLab } from "@/lib/demoLabContext";
 import { useOwnerLedger } from "@/lib/useOwnerLedger";
+import { refreshSubscriberLedgerNow } from "@/lib/useSubscriberLedger";
 import type { AppRoute } from "@/lib/route";
 import { useStore, type CommunityRecord, type PaymentRecord, type SubscriptionRecord } from "@/lib/store";
 import { getConnectedTonAddress } from "@/lib/ton/wallet";
@@ -145,8 +146,16 @@ function Purchase({ community }: { community: CommunityRecord }) {
   const store = useStore();
   const lab = useDemoLab();
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [reasons, setReasons] = useState<string[]>([]);
   const durationDays = Math.max(1, Math.round(community.periodSeconds / 86_400));
+
+  useEffect(() => {
+    if (!confirming) return;
+    refreshSubscriberLedgerNow();
+    const timer = window.setInterval(() => refreshSubscriberLedgerNow(), 3_000);
+    return () => window.clearInterval(timer);
+  }, [confirming]);
   const price = formatUsdt(community.price);
   const members = community.telegramMemberCount;
 
@@ -167,7 +176,13 @@ function Purchase({ community }: { community: CommunityRecord }) {
         }
       }
       const outcome = await store.preparePayment(community.id);
-      setReasons(outcome.reasons);
+      if (outcome.tx?.status === "sent") {
+        setConfirming(true);
+        setReasons([]);
+        refreshSubscriberLedgerNow();
+      } else {
+        setReasons(outcome.reasons);
+      }
     } finally {
       setBusy(false);
     }
@@ -211,6 +226,8 @@ function Purchase({ community }: { community: CommunityRecord }) {
       <ReasonList reasons={reasons} />
       {community.status === "paused" ? (
         <p className="text-sm text-[var(--pg-hint)]">This community is deactivated. New subscriptions are closed.</p>
+      ) : confirming ? (
+        <p className="text-sm leading-relaxed">Payment sent. Waiting for confirmation. Join community appears when the payment is confirmed.</p>
       ) : (
         <div className="space-y-2">
           <button type="button" className={`${primaryButton} w-full`} onClick={() => void pay()} disabled={busy}>
@@ -276,6 +293,14 @@ function SubscriptionDetail({
   const store = useStore();
   const [reasons, setReasons] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+
+  useEffect(() => {
+    if (!confirming) return;
+    refreshSubscriberLedgerNow();
+    const timer = window.setInterval(() => refreshSubscriberLedgerNow(), 3_000);
+    return () => window.clearInterval(timer);
+  }, [confirming]);
   const status = subscriptionStatus({
     confirmation: subscription.confirmation,
     expiresAt: subscription.expiresAt,
@@ -312,7 +337,13 @@ function SubscriptionDetail({
         }
       }
       const outcome = await store.preparePayment(community.id);
-      setReasons(outcome.reasons);
+      if (outcome.tx?.status === "sent") {
+        setConfirming(true);
+        setReasons([]);
+        refreshSubscriberLedgerNow();
+      } else {
+        setReasons(outcome.reasons);
+      }
     } finally {
       setBusy(false);
     }
@@ -403,7 +434,10 @@ function SubscriptionDetail({
         <p className="text-sm text-[var(--pg-hint)]">This community is deactivated, so renewal and a new subscription are closed.</p>
       ) : null}
       <ReasonList reasons={reasons} />
-      {needsPay && community.status !== "paused" ? (
+      {confirming ? (
+        <p className="text-sm leading-relaxed">Payment sent. Waiting for confirmation. Join community appears when the payment is confirmed.</p>
+      ) : null}
+      {needsPay && community.status !== "paused" && !confirming ? (
         <div className="space-y-2">
           <button
             type="button"

@@ -520,6 +520,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           referralAuthorizationValidUntil,
         });
         setLastTx(tx);
+        if (tx.status === "sent") return { ok: false, reasons: [], tx };
         const gate = await confirmPayment();
         return { ok: false, reasons: [...reasons, ...gate.reasons], tx };
       },

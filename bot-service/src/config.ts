@@ -9,9 +9,21 @@ export type BotServiceConfig = {
   cronIntervalMs: number;
 };
 
+const MAINNET_API = "https://toncenter.com/api/v2";
+const TESTNET_API = "https://testnet.toncenter.com/api/v2";
+
 function parseMs(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 1_000 ? Math.trunc(parsed) : fallback;
+}
+
+/** A mainnet registry must not be read through a testnet API, and the reverse. */
+export function registryApiUrl(address: string, configured: string | undefined): string {
+  const cleaned = (configured || MAINNET_API).trim().replace(/\/$/, "").replace(/\/jsonRPC$/, "");
+  const onTestnetHost = cleaned.includes("testnet");
+  if (address.startsWith("EQ") || address.startsWith("UQ")) return onTestnetHost ? MAINNET_API : cleaned;
+  if (address.startsWith("kQ") || address.startsWith("0Q")) return onTestnetHost ? cleaned : TESTNET_API;
+  return cleaned;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): BotServiceConfig {
@@ -25,7 +37,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BotServiceConf
   return {
     databaseUrl,
     telegramBotToken,
-    tonApiUrl: (env.TON_API_URL || "https://toncenter.com/api/v2").replace(/\/$/, ""),
+    tonApiUrl: registryApiUrl(registryAddress, env.TON_API_URL),
     tonApiKey: env.TONCENTER_API_KEY || env.TON_API_KEY || "",
     registryAddress,
     registryCodeHash: (env.PASSGRAM_REGISTRY_CODE_HASH || "").trim().toLowerCase(),

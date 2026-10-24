@@ -2,7 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useDemoLab } from "@/lib/demoLabContext";
-import { formatCommunityReferralLink, formatReferralLink, rankAffiliates, type RankedAffiliate } from "@/lib/domain";
+import {
+  formatCommunityReferralLink,
+  formatReferralLink,
+  rankAffiliates,
+  referralShareMessage,
+  referralShareTargets,
+  type RankedAffiliate,
+} from "@/lib/domain";
 import { computeSplit, formatUsdt } from "@/lib/money";
 import { loadLeaderboard } from "@/lib/services/confirmation";
 import { useStore } from "@/lib/store";
@@ -474,14 +481,42 @@ function LeaderboardSegment() {
   );
 }
 
+function openShareTarget(url: string) {
+  const webApp = window.Telegram?.WebApp as { openLink?: (url: string) => void; openTelegramLink?: (url: string) => void } | undefined;
+  if (url.startsWith("https://t.me/") && typeof webApp?.openTelegramLink === "function") {
+    webApp.openTelegramLink(url);
+    return;
+  }
+  if (typeof webApp?.openLink === "function") {
+    webApp.openLink(url);
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
 function AffiliateDashboard({ code, payoutAddress }: { code: string; payoutAddress: string }) {
   const [copied, setCopied] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const origin = typeof window === "undefined" ? null : window.location.origin;
   const link = formatReferralLink(code, origin);
+  const message = referralShareMessage(link);
+  const targets = referralShareTargets(link);
   async function copy() {
     await navigator.clipboard.writeText(link);
     setCopied(true);
   }
+  function share(target: "x" | "telegram") {
+    openShareTarget(targets[target]);
+    setShareOpen(false);
+  }
+  useEffect(() => {
+    if (!shareOpen) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setShareOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [shareOpen]);
   return (
     <section className="space-y-3 rounded-3xl border border-[var(--pg-line)] bg-[var(--pg-card)] p-4">
       <h2 className="font-semibold">Your PassGram referral link</h2>
@@ -491,16 +526,48 @@ function AffiliateDashboard({ code, payoutAddress }: { code: string; payoutAddre
       <p className="text-xs text-[var(--pg-hint)]">Code {code}</p>
       <p className="text-sm text-[var(--pg-hint)]">Receiving wallet: {payoutAddress}</p>
       <div className="grid grid-cols-2 gap-2">
-        <button className={primaryButton} onClick={() => void copy()}>
+        <button type="button" className={primaryButton} onClick={() => void copy()}>
           {copied ? "Copied" : "Copy link"}
         </button>
-        <button
-          className="inline-flex min-h-11 items-center justify-center rounded-full border border-[var(--pg-blue)] bg-[var(--pg-card)] px-4 text-base font-normal text-[var(--pg-blue)]"
-          onClick={() => void navigator.share?.({ url: link, title: "PassGram" })}
-        >
+        <button type="button" className={secondaryButton} onClick={() => setShareOpen(true)}>
           Share
         </button>
       </div>
+      {shareOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 px-4 pb-8 sm:items-center"
+          role="presentation"
+          onClick={() => setShareOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="referral-share-title"
+            className="w-full max-w-[398px] space-y-4 rounded-3xl border border-[var(--pg-line)] bg-[var(--pg-card)] p-5 shadow-[var(--pg-shadow-float)]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div>
+              <h2 id="referral-share-title" className="text-lg font-semibold">
+                Share your referral link
+              </h2>
+              <p className="mt-2 whitespace-pre-wrap rounded-2xl bg-[var(--pg-bg)] px-3 py-3 text-sm leading-relaxed">
+                {message}
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" className={secondaryButton} onClick={() => share("x")}>
+                Share on X
+              </button>
+              <button type="button" className={primaryButton} onClick={() => share("telegram")}>
+                Share on Telegram
+              </button>
+            </div>
+            <button type="button" className="min-h-11 w-full text-sm text-[var(--pg-hint)]" onClick={() => setShareOpen(false)}>
+              Close
+            </button>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

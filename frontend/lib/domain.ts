@@ -317,10 +317,14 @@ export function miniAppShortName(): string {
  * Opens the Mini App itself (not the bot chat).
  * `startapp` becomes WebApp start_param. Telegram prompts first-time users to start the bot, then opens the app.
  */
-export function formatMiniAppLink(startParam: string): string {
+export function formatMiniAppHomeLink(): string {
   const bot = referralBotUsername() || "PassGramBot";
   const app = miniAppShortName();
-  return `https://t.me/${bot}/${app}?startapp=${startParam}`;
+  return `https://t.me/${bot}/${app}`;
+}
+
+export function formatMiniAppLink(startParam: string): string {
+  return `${formatMiniAppHomeLink()}?startapp=${startParam}`;
 }
 
 /**
@@ -331,6 +335,22 @@ export function formatReferralLink(code: string, _origin?: string | null): strin
   const safe = normalizeCode(code);
   if (!safe) return "";
   return formatMiniAppLink(`ref_${safe}`);
+}
+
+/** Announcement posted when a marketer shares a newly created PassGram referral link. */
+export const PASSGRAM_REFERRAL_SHARE_TEXT =
+  "I just created my referral link on PassGram. Join to create a community and manage memberships automatically.";
+
+export function referralShareMessage(link: string): string {
+  return `${PASSGRAM_REFERRAL_SHARE_TEXT}\n\n${link}`;
+}
+
+/** X receives the full post. Telegram attaches the link separately so it is not repeated. */
+export function referralShareTargets(link: string): { x: string; telegram: string } {
+  return {
+    x: `https://x.com/intent/tweet?text=${encodeURIComponent(referralShareMessage(link))}`,
+    telegram: `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(PASSGRAM_REFERRAL_SHARE_TEXT)}`,
+  };
 }
 
 /** Public subscription link. Opens the Mini App on that community card. */

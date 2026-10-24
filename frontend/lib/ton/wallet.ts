@@ -44,7 +44,7 @@ export function setTonConnectAdapter(next: TonConnectAdapter | null): void {
   adapter = next;
   setSendAdapter(next);
   if (!next) connectedAddress = null;
-  else if (next.currentAccount?.().address) connectedAddress = next.currentAccount().address ?? null;
+  else connectedAddress = next.currentAccount?.().address || null;
 }
 
 export function getConnectedTonAddress(): string | null {
@@ -129,8 +129,11 @@ export async function connectTonWallet(): Promise<string | null> {
 }
 
 export async function disconnectTonWallet(): Promise<void> {
-  connectedAddress = null;
-  await adapter?.disconnect?.();
+  try {
+    await adapter?.disconnect?.();
+  } finally {
+    connectedAddress = null;
+  }
 }
 
 export function tonWalletAvailable(): boolean {

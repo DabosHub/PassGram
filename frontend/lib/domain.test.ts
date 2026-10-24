@@ -20,7 +20,10 @@ import {
   subscriptionProgress,
   subscriptionStatus,
   formatCommunityReferralLink,
+  formatMiniAppHomeLink,
   formatReferralLink,
+  referralShareMessage,
+  referralShareTargets,
   suggestReferralCode,
   validateCommunityDraft,
 } from "./domain.ts";
@@ -179,6 +182,7 @@ test("referral codes are short and links look like Telegram invites", () => {
   assert.equal(suggestReferralCode({ telegramUsername: null, telegramUserId: null, userId: "local:a1c1f8bcc95d422090bab6c00" }), "gbab6c00");
   const previous = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
   delete process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
+  assert.equal(formatMiniAppHomeLink(), "https://t.me/PassGramBot/passgram");
   assert.equal(formatReferralLink("mira", "http://localhost:3000"), "https://t.me/PassGramBot/passgram?startapp=ref_mira");
   process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME = "PassGramBot";
   assert.equal(formatReferralLink("mira", "http://localhost:3000"), "https://t.me/PassGramBot/passgram?startapp=ref_mira");
@@ -191,6 +195,23 @@ test("referral codes are short and links look like Telegram invites", () => {
   assert.equal(formatReferralLink("mira", "https://app.passgram.example"), "https://t.me/PassGramBot/passgram?startapp=ref_mira");
   if (previous == null) delete process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
   else process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME = previous;
+});
+
+test("a PassGram referral share post includes the link for X and Telegram", () => {
+  const link = "https://t.me/PassGramBot/passgram?startapp=ref_mira";
+  const message = referralShareMessage(link);
+  assert.match(message, /I just created my referral link on PassGram/);
+  assert.match(message, /manage memberships automatically/);
+  assert.ok(message.endsWith(link));
+  const targets = referralShareTargets(link);
+  const tweet = new URL(targets.x);
+  assert.equal(tweet.origin + tweet.pathname, "https://x.com/intent/tweet");
+  assert.equal(tweet.searchParams.get("text"), message);
+  const telegram = new URL(targets.telegram);
+  assert.equal(telegram.origin + telegram.pathname, "https://t.me/share/url");
+  assert.equal(telegram.searchParams.get("url"), link);
+  assert.match(telegram.searchParams.get("text") || "", /I just created my referral link on PassGram/);
+  assert.equal((telegram.searchParams.get("text") || "").includes(link), false);
 });
 
 test("community referral cut comes from creator share after platform fee", () => {

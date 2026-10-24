@@ -172,6 +172,21 @@ export function AppShell() {
             </span>
             <span>{walletBusy ? "Connecting" : walletAccount ? shortenAccount(walletAccount) : "Connect"}</span>
           </button>
+          {walletAccount ? (
+            <button
+              type="button"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--pg-line)] text-[var(--pg-hint)] disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label="Disconnect wallet"
+              disabled={walletBusy}
+              onClick={() => {
+                if (walletBusy) return;
+                setWalletBusy(true);
+                void store.disconnectWallet().finally(() => setWalletBusy(false));
+              }}
+            >
+              <DisconnectIcon />
+            </button>
+          ) : null}
           <button
             className="rounded-full"
             aria-label="My account"
@@ -257,6 +272,14 @@ export function AppShell() {
 function shortenAccount(account: string): string {
   if (account.length <= 12) return account;
   return `${account.slice(0, 6)}…${account.slice(-4)}`;
+}
+
+function DisconnectIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M7 7l10 10M17 7 7 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
 }
 
 function WalletIcon() {

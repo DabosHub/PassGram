@@ -1186,9 +1186,7 @@ function CommunitySettings({ community, go }: { community: CommunityRecord; go: 
           </div>
         ) : null}
       </section>
-      </div>
 
-      <div className="sticky bottom-20 z-20 mt-auto bg-[var(--pg-bg)] pt-4">
       <section className="space-y-3 rounded-3xl border border-[var(--pg-line)] bg-[var(--pg-card)] p-4">
         <h2 className="text-lg font-semibold">{paused ? "Activate community" : "Deactivate community"}</h2>
         <p className="text-sm text-[var(--pg-hint)]">

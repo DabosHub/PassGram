@@ -132,3 +132,42 @@ textarea::placeholder {
     background: #061018;
   }
 }
+
+.pg-app,
+.pg-app-boot {
+  display: none;
+}
+
+html[data-surface="app"] .pg-site {
+  display: none;
+}
+
+html[data-surface="app"] .pg-app,
+html[data-surface="app"] .pg-app-boot {
+  display: block;
+}
+
+html[data-surface="app"]:has(.pg-app-ready) .pg-app-boot {
+  display: none;
+}
+
+.pg-site section[id] {
+  scroll-margin-top: 5.5rem;
+}
+
+.pg-faq summary {
+  list-style: none;
+}
+
+.pg-faq summary::-webkit-details-marker {
+  display: none;
+}
+
+.pg-faq-chevron {
+  transform: rotate(45deg);
+  transition: transform 160ms ease;
+}
+
+.pg-faq details[open] .pg-faq-chevron {
+  transform: rotate(225deg);
+}

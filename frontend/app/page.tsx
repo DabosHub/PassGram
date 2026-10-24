@@ -1,33 +1,39 @@
-"use client";
+import type { Metadata } from "next";
+import { AppGate } from "@/components/site/AppGate";
+import { MarketingPage } from "@/components/site/MarketingPage";
+import { SITE_URL } from "@/lib/site";
 
-import type { ReactNode } from "react";
-import { AppShell } from "@/components/AppShell";
-import { DemoLab } from "@/components/DemoLab";
-import { TonConnectProvider } from "@/components/TonConnectBridge";
-import { DemoLabProvider } from "@/lib/demoLabContext";
-import { RouteProvider } from "@/lib/routeContext";
-import { StoreProvider, useStore } from "@/lib/store";
+const title = "PassGram — Automatic Telegram subscriptions in USDT on TON";
+const description =
+  "PassGram is an open-source Telegram Mini App for paid channels. Subscribers pay in USDT on TON. Access opens after confirmation and ends when the paid period ends.";
 
-function WalletSync({ children }: { children: ReactNode }) {
-  const store = useStore();
-  return (
-    <TonConnectProvider onAddress={(address) => store.syncWalletAccount(address)}>
-      {children}
-    </TonConnectProvider>
-  );
-}
+export const metadata: Metadata = {
+  title: { absolute: title },
+  description,
+  alternates: { canonical: SITE_URL },
+  openGraph: {
+    title,
+    description,
+    url: SITE_URL,
+    siteName: "PassGram",
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title,
+    description,
+  },
+  robots: { index: true, follow: true },
+};
 
 export default function HomePage() {
   return (
-    <StoreProvider>
-      <RouteProvider>
-        <DemoLabProvider>
-          <WalletSync>
-            <AppShell />
-            <DemoLab />
-          </WalletSync>
-        </DemoLabProvider>
-      </RouteProvider>
-    </StoreProvider>
+    <>
+      <MarketingPage />
+      <div className="pg-app-boot" aria-hidden="true">
+        <p className="flex min-h-dvh items-center justify-center text-sm text-[var(--pg-hint)]">Loading</p>
+      </div>
+      <AppGate />
+    </>
   );
 }

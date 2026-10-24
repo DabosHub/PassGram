@@ -6,7 +6,7 @@ import { normalizeCode } from "./money";
 import { contractIsConfigured } from "./ton/config";
 import { sendSubscriptionPayment } from "./ton/payments";
 import { mergeSubscriberSnapshot, type SubscriberSnapshot } from "./subscriberLedger";
-import { getConnectedTonAddress, signLinkedWallet, connectTonWallet, type WalletSendResult } from "./ton/wallet";
+import { getConnectedTonAddress, signLinkedWallet, connectTonWallet, disconnectTonWallet, type WalletSendResult } from "./ton/wallet";
 import { tonWalletKey } from "./ton/walletKey";
 import { isDemoLabEnabled } from "./demoLab";
 import type { PayoutWalletProof } from "./ton/walletProof";
@@ -109,6 +109,7 @@ type Store = Ledger & {
   clearNotice: () => void;
   dismissTx: () => void;
   connectWallet: () => Promise<string | null>;
+  disconnectWallet: () => Promise<void>;
   syncWalletAccount: (address: string | null) => void;
   setTelegramProfile: (profile: {
     telegramUserId: number | null;
@@ -229,6 +230,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const account = await connectTonWallet();
         setWalletAccount(account);
         return account;
+      },
+      disconnectWallet: async () => {
+        try {
+          await disconnectTonWallet();
+        } finally {
+          setWalletAccount(null);
+        }
       },
       syncWalletAccount: (address) => setWalletAccount(address),
       setTelegramProfile: (profile) => {

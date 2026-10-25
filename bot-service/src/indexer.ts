@@ -160,7 +160,7 @@ async function main() {
   }
 }
 
-const isDirect = process.argv[1]?.includes("indexer");
-if (isDirect) {
+const isCli = process.argv[1]?.replaceAll("\\", "/").endsWith("src/indexer.ts") === true;
+if (isCli) {
   void main();
 }

@@ -89,7 +89,7 @@ Required public TON keys:
 1. Connect TON wallet (Telegram Wallet / Tonkeeper)
 2. Open a community share link (`c_<id>`)
 3. Pay USDT Jetton via TON Connect
-4. Confirm `bot-service` indexer records the payment and invite link
+4. Reopen the Mini App. The Vercel app reads the payment from the registry and shows Join community. It does not need a process on a personal computer.
 
 ## Out of scope (v1)
 

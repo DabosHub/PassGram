@@ -27,6 +27,12 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   serverExternalPackages: ["pg"],
+  // The chain pass lives in bot-service and is imported by the Vercel app.
+  experimental: { externalDir: true },
+  webpack: (config) => {
+    config.resolve.modules = [path.join(__dirname, "node_modules"), ...(config.resolve.modules ?? ["node_modules"])];
+    return config;
+  },
   async headers() {
     return [
       {

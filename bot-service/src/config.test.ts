@@ -14,6 +14,18 @@ test("a bad poll interval falls back instead of spinning the indexer", () => {
   assert.equal(config.cronIntervalMs, 60_000);
 });
 
+test("a stale or empty code hash still selects the current registry source", () => {
+  const current = "db8965a9ee8210beaa92285488794ba6cf39940dbf84c8ef17bfdba67c1c8961";
+  assert.equal(loadConfig({ ...base, PASSGRAM_REGISTRY_CODE_HASH: "" }).registryCodeHash, current);
+  assert.equal(
+    loadConfig({
+      ...base,
+      PASSGRAM_REGISTRY_CODE_HASH: "39446c74dc43c8b824b03d9495d7ee9251c6ac03b7fec1834332507ab7d19294",
+    }).registryCodeHash,
+    current,
+  );
+  assert.equal(loadConfig({ ...base, PASSGRAM_REGISTRY_CODE_HASH: current }).registryCodeHash, current);
+});
 test("the retired registry address is not indexed", () => {
   const config = loadConfig({
     ...base,

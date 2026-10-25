@@ -5,7 +5,9 @@ import pg from "pg";
 import { sanitizeError } from "./log.ts";
 import { tonWalletKey } from "./walletKey.ts";
 
-const supabaseRootCa = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../certs/prod-ca-2021.crt"), "utf8");
+function supabaseRootCa(): string {
+  return readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../certs/prod-ca-2021.crt"), "utf8");
+}
 
 export function createPool(databaseUrl: string): pg.Pool {
   const remote = /supabase|pooler\.|sslmode=require/i.test(databaseUrl);
@@ -13,7 +15,7 @@ export function createPool(databaseUrl: string): pg.Pool {
     ? undefined
     : process.env.PASSGRAM_DATABASE_SSL_NO_VERIFY === "1"
       ? { rejectUnauthorized: false }
-      : { rejectUnauthorized: true, ca: supabaseRootCa };
+      : { rejectUnauthorized: true, ca: supabaseRootCa() };
   return new pg.Pool({
     connectionString: databaseUrl,
     ssl,

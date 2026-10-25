@@ -75,7 +75,7 @@ async function main() {
   }
 }
 
-const isDirect = process.argv[1]?.includes("cron");
-if (isDirect) {
+const isCli = process.argv[1]?.replaceAll("\\", "/").endsWith("src/cron.ts") === true;
+if (isCli) {
   void main();
 }

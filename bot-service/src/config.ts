@@ -1,3 +1,5 @@
+import { PASSGRAM_REGISTRY_CODE_HASH } from "./registryCode.ts";
+
 export type BotServiceConfig = {
   databaseUrl: string;
   telegramBotToken: string;
@@ -11,6 +13,7 @@ export type BotServiceConfig = {
 
 const CURRENT_REGISTRY = "EQCZ-KnsXQKxbCl0wlS9C_OcNQvPOdK-w9mYiRA_-kxy0uv6";
 const RETIRED_REGISTRY = "EQBkUvELQJXV8iiAkSduh7M3IC1x5FxhrLc1WK_9LHgyHDI2";
+const RETIRED_CODE_HASH = "39446c74dc43c8b824b03d9495d7ee9251c6ac03b7fec1834332507ab7d19294";
 const MAINNET_API = "https://toncenter.com/api/v2";
 const TESTNET_API = "https://testnet.toncenter.com/api/v2";
 
@@ -33,6 +36,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BotServiceConf
   const telegramBotToken = env.TELEGRAM_BOT_TOKEN?.trim();
   const configuredRegistry = env.PASSGRAM_REGISTRY_ADDRESS?.trim() || env.NEXT_PUBLIC_PASSGRAM_REGISTRY?.trim() || "";
   const registryAddress = !configuredRegistry || configuredRegistry === RETIRED_REGISTRY ? CURRENT_REGISTRY : configuredRegistry;
+  const configuredHash = (env.PASSGRAM_REGISTRY_CODE_HASH || "").trim().toLowerCase();
+  const registryCodeHash =
+    !configuredHash || configuredHash === RETIRED_CODE_HASH ? PASSGRAM_REGISTRY_CODE_HASH : configuredHash;
   if (!databaseUrl) throw new Error("DATABASE_URL is required");
   if (!telegramBotToken) throw new Error("TELEGRAM_BOT_TOKEN is required");
   if (!registryAddress) throw new Error("PASSGRAM_REGISTRY_ADDRESS is required");
@@ -43,7 +49,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BotServiceConf
     tonApiUrl: registryApiUrl(registryAddress, env.TON_API_URL),
     tonApiKey: env.TONCENTER_API_KEY || env.TON_API_KEY || "",
     registryAddress,
-    registryCodeHash: (env.PASSGRAM_REGISTRY_CODE_HASH || "").trim().toLowerCase(),
+    registryCodeHash,
     pollIntervalMs: parseMs(env.INDEXER_POLL_MS, 15_000),
     cronIntervalMs: parseMs(env.CRON_INTERVAL_MS, 60_000),
   };

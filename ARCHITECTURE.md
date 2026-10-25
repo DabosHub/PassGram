@@ -27,8 +27,8 @@ flowchart LR
 | Path | Role |
 | --- | --- |
 | `contract/` | Tolk 1.5.0 registry. It stores the community price, duration, and referral rate, checks the owner signature, splits USDT, and emits events. |
-| `frontend/` | Telegram Mini App, the owner console at `/admin`, and the HTTP APIs for channels, referrals, wallets, and the webhook. Vercel builds this directory. |
-| `bot-service/` | Polls TonCenter, writes confirmed payments and the listed price, creates one-time invites, and removes expired members. |
+| `frontend/` | Telegram Mini App, the owner console at `/admin`, and the HTTP APIs for channels, referrals, wallets, and the webhook. Vercel builds this directory. A signed-in membership read and `GET /api/cron/passgram` run one chain pass there. |
+| `bot-service/` | The payment indexer and expiration cron. Vercel imports these functions. The same loops can still run as a process on another host. |
 | `backend/` | Schema and migrations only. There is no separate API process. |
 
 ## What is allowed to change state

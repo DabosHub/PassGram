@@ -7,7 +7,7 @@
   },
   "type": "module",
   "scripts": {
-    "build": "npx @ton/tolk-js --output-json build/tolk-registry.json contracts/passgram_registry.tolk",
+    "build": "node scripts/prepare-build.mjs && npx @ton/tolk-js --output-json build/tolk-registry.json contracts/passgram_registry.tolk",
     "test": "npm run build && node --test tests/split.test.mjs tests/codehash.test.mjs && node --import tsx --test tests/registry.sandbox.ts",
     "deploy:testnet": "tsx scripts/deploy-testnet.ts",
     "deploy:mainnet": "tsx scripts/deploy-mainnet.ts",

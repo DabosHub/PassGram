@@ -100,6 +100,11 @@ export function SiteFrame({
             <a className={textLink} href="/terms">
               Terms of use
             </a>
+            {gate ? (
+              <a className={textLink} href="https://ton.app/app/passgram" target="_blank" rel="noopener">
+                Find us on Ton.app
+              </a>
+            ) : null}
           </div>
         </div>
         <div className="border-t border-[var(--pg-line)]">

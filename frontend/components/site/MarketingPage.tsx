@@ -45,12 +45,15 @@ export function MarketingPage() {
             An open-source way to run a paid channel. Subscribers pay the price you set, in USDT, from a TON wallet.
             Access opens after the payment is confirmed, and closes when the period ends.
           </p>
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
             <a className={primaryLink} href={MINI_APP_URL} rel="noopener noreferrer">
               Start in Telegram
             </a>
             <a className={secondaryLink} href={GITHUB_URL} target="_blank" rel="noopener noreferrer">
               View the source
+            </a>
+            <a className={secondaryLink} href="https://ton.app/app/passgram" target="_blank" rel="noopener noreferrer">
+              View on Ton.app
             </a>
           </div>
         </div>

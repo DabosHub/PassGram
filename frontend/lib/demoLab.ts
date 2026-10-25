@@ -43,6 +43,8 @@ export type DemoSceneId =
   | "community.purchase"
   | "subscription.active"
   | "subscription.expired"
+  | "subscribe.join"
+  | "subscribe.invite_blocked"
   | "manage.community"
   | "account.hub"
   | "account.analytics"
@@ -62,6 +64,7 @@ export type DemoScene = {
   createStage: DemoCreateStage | null;
   referralSegment: DemoReferralSegment | null;
   lastTx: boolean;
+  joinPreview?: "offer" | "blocked";
 };
 
 export type DemoLedger = {
@@ -146,6 +149,8 @@ export const DEMO_SCENES: DemoScene[] = [
   { id: "community.purchase", group: "Subscribe", label: "Purchase page", route: community(DEMO_FOREIGN_COMMUNITY_ID), createStage: null, referralSegment: null, lastTx: false },
   { id: "subscription.active", group: "Subscribe", label: "Active subscription", route: community(DEMO_FOREIGN_COMMUNITY_ID, "subscription"), createStage: null, referralSegment: null, lastTx: false },
   { id: "subscription.expired", group: "Subscribe", label: "Expired subscription", route: community(DEMO_FOREIGN_COMMUNITY_ID, "subscription"), createStage: null, referralSegment: null, lastTx: false },
+  { id: "subscribe.join", group: "Subscribe", label: "Join community", route: community(DEMO_FOREIGN_COMMUNITY_ID), createStage: null, referralSegment: null, lastTx: false, joinPreview: "offer" },
+  { id: "subscribe.invite_blocked", group: "Subscribe", label: "Invite unavailable", route: community(DEMO_FOREIGN_COMMUNITY_ID), createStage: null, referralSegment: null, lastTx: false, joinPreview: "blocked" },
   { id: "manage.community", group: "Manage", label: "Owner manage", route: community(DEMO_OWNED_COMMUNITY_ID, "manage"), createStage: null, referralSegment: null, lastTx: false },
   { id: "account.hub", group: "Account", label: "Hub", route: account("hub"), createStage: null, referralSegment: null, lastTx: false },
   { id: "account.analytics", group: "Account", label: "Analytics", route: account("analytics"), createStage: null, referralSegment: null, lastTx: false },
@@ -395,6 +400,13 @@ export function buildDemoLedger(sceneId: DemoSceneId): DemoLedger {
         ...empty,
         communities: [foreignCommunity()],
         subscriptions: [expiredSubscription()],
+      };
+    case "subscribe.join":
+    case "subscribe.invite_blocked":
+      return {
+        ...empty,
+        communities: [foreignCommunity()],
+        subscriptions: [activeSubscription(20)],
       };
     case "dashboard.both":
       return {

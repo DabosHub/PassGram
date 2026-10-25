@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import type { AppRoute } from "@/lib/route";
+import { DEMO_FOREIGN_COMMUNITY_ID, demoSceneById } from "@/lib/demoLab";
 import { useDemoLab } from "@/lib/demoLabContext";
-import { resolveSubscriberView } from "@/lib/subscriberAccess";
+import { INVITE_ADMIN_ERROR, resolveSubscriberView, type SubscriberAccess } from "@/lib/subscriberAccess";
 import { useStore } from "@/lib/store";
-import { refreshSubscriberLedgerNow, useSubscriberLedger } from "@/lib/useSubscriberLedger";
+import { refreshSubscriberLedgerNow, setFreshMemberCheck, useSubscriberLedger } from "@/lib/useSubscriberLedger";
 import { bootTelegram, bootTelegramSdk } from "@/lib/telegram";
 import { useAppRoute } from "@/lib/useRoute";
 import { AccountView } from "./AccountView";
@@ -14,7 +15,7 @@ import { CreateView } from "./CreateView";
 import { DashboardView } from "./DashboardView";
 import { Logo } from "./Logo";
 import { ReferralView } from "./ReferralView";
-import { JoinCommunityModal, openCommunityInvite } from "./JoinCommunityModal";
+import { InviteUnavailableNotice, JoinCommunityModal, openCommunityInvite } from "./JoinCommunityModal";
 import { Avatar } from "./ui";
 
 const tabs = [
@@ -33,30 +34,63 @@ export function AppShell() {
   const subscriberLedger = useSubscriberLedger(Boolean(lab.sceneId));
   const [rejoinRequired, setRejoinRequired] = useState<number[]>([]);
   const [joinAttemptCommunityId, setJoinAttemptCommunityId] = useState<number | null>(null);
-  const rejoin = subscriberLedger
+  const [previewJoined, setPreviewJoined] = useState(false);
+  const joinPreview = lab.sceneId ? (demoSceneById(lab.sceneId).joinPreview ?? null) : null;
+  const previewAccess: SubscriberAccess[] | null =
+    joinPreview === "blocked"
+      ? [
+          {
+            communityId: DEMO_FOREIGN_COMMUNITY_ID,
+            communityName: "Builder Lounge",
+            inChannel: false,
+            inviteLink: null,
+            inviteError: INVITE_ADMIN_ERROR,
+          },
+        ]
+      : joinPreview === "offer"
+        ? [
+            {
+              communityId: DEMO_FOREIGN_COMMUNITY_ID,
+              communityName: "Builder Lounge",
+              inChannel: previewJoined,
+              inviteLink: previewJoined ? null : "https://t.me/+demo-invite",
+              inviteError: null,
+            },
+          ]
+        : null;
+  const ledgerForJoin = previewAccess
+    ? { subscriptions: [], payments: [], access: previewAccess }
+    : subscriberLedger;
+  const rejoin = ledgerForJoin
     ? resolveSubscriberView({
-        access: subscriberLedger.access,
+        access: ledgerForJoin.access,
         requiredCommunityIds: rejoinRequired,
         joinAttemptCommunityId,
       })
-    : { hold: [], offer: null };
+    : { hold: [], offer: null, inviteError: null };
 
   useEffect(() => {
-    if (!subscriberLedger) return;
-    const outside = subscriberLedger.access.filter((row) => row.inChannel === false).map((row) => row.communityId);
+    setPreviewJoined(false);
+    setJoinAttemptCommunityId(null);
+    setFreshMemberCheck(false);
+  }, [lab.sceneId]);
+
+  useEffect(() => {
+    if (!ledgerForJoin) return;
+    const outside = ledgerForJoin.access.filter((row) => row.inChannel === false).map((row) => row.communityId);
     if (!outside.length) return;
     setRejoinRequired((current) => {
       const next = new Set(current);
       for (const id of outside) next.add(id);
       return next.size === current.length ? current : [...next];
     });
-  }, [subscriberLedger]);
+  }, [ledgerForJoin]);
 
   const holdKey = rejoin.hold.join(",");
   const offerCommunityId = rejoin.offer?.communityId ?? null;
 
   useEffect(() => {
-    if (!subscriberLedger) return;
+    if (!subscriberLedger || previewAccess) return;
     const held = new Set(holdKey ? holdKey.split(",").map(Number) : []);
     store.applySubscriberLedger(
       {
@@ -65,13 +99,13 @@ export function AppShell() {
       },
       held.size ? [...held] : [],
     );
-  }, [store, subscriberLedger, holdKey]);
+  }, [store, subscriberLedger, holdKey, previewAccess]);
 
   useEffect(() => {
-    if (offerCommunityId == null || joinAttemptCommunityId !== offerCommunityId) return;
+    if (joinPreview || offerCommunityId == null || joinAttemptCommunityId !== offerCommunityId) return;
     const timer = window.setInterval(() => refreshSubscriberLedgerNow(), 3000);
     return () => window.clearInterval(timer);
-  }, [offerCommunityId, joinAttemptCommunityId]);
+  }, [joinPreview, offerCommunityId, joinAttemptCommunityId]);
 
   useEffect(() => {
     const profile = bootTelegram();
@@ -215,6 +249,7 @@ export function AppShell() {
         ) : null}
         {!ready || !store.ready ? <p className="text-sm text-[var(--pg-hint)]">Loading</p> : <Screen route={route} go={go} />}
       </section>
+      {rejoin.inviteError ? <InviteUnavailableNotice message={rejoin.inviteError} /> : null}
       {rejoin.offer?.inviteLink ? (
         <JoinCommunityModal
           communityName={rejoin.offer.communityName}
@@ -224,7 +259,13 @@ export function AppShell() {
             const offer = rejoin.offer;
             if (!offer?.inviteLink) return;
             setJoinAttemptCommunityId(offer.communityId);
+            if (joinPreview) {
+              setPreviewJoined(true);
+              return;
+            }
+            setFreshMemberCheck(true, offer.communityId);
             openCommunityInvite(offer.inviteLink);
+            refreshSubscriberLedgerNow();
           }}
         />
       ) : null}

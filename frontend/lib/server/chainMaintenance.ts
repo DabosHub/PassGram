@@ -1,4 +1,3 @@
-import { after } from "next/server";
 import { Pool } from "pg";
 import { runExpirationCronOnce } from "../../../bot-service/src/cron.ts";
 import { runIndexerOnce } from "../../../bot-service/src/indexer.ts";
@@ -6,7 +5,26 @@ import { sanitizeError } from "../../../bot-service/src/log.ts";
 import { databaseSsl } from "./databaseSsl";
 
 const PASS_INTERVAL_SECONDS = 8;
+/** Leaves room inside the 60s route limit for the membership read after a slow TonCenter call. */
+export const CHAIN_PASS_WAIT_MS = 25_000;
 const pools = globalThis as { passgramChainPool?: Pool; passgramChainActive?: boolean };
+let chainInflight: Promise<"ran" | "skipped" | "busy"> | null = null;
+
+export function withTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T | "timeout"> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve("timeout"), timeoutMs);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 function chainPool(): Pool | null {
   const databaseUrl = process.env.DATABASE_URL?.trim();
@@ -23,9 +41,26 @@ function chainPool(): Pool | null {
 
 /**
  * One chain pass at a time. The claim is atomic so overlapping Vercel instances
- * do not walk the same registry cursor.
+ * do not walk the same registry cursor. The update does not move last_processed_lt.
  */
-export async function runChainPass(): Promise<"ran" | "skipped" | "busy"> {
+export function runChainPass(): Promise<"ran" | "skipped" | "busy"> {
+  if (chainInflight) return Promise.resolve("busy");
+  const work = executeChainPass().finally(() => {
+    if (chainInflight === work) chainInflight = null;
+  });
+  chainInflight = work;
+  return work;
+}
+
+/**
+ * Waits for this instance's chain pass, including one that is already running.
+ * A slow pass keeps going after the timeout so the cursor is not abandoned.
+ */
+export function awaitChainPass(timeoutMs = CHAIN_PASS_WAIT_MS): Promise<"ran" | "skipped" | "busy" | "timeout"> {
+  return withTimeout(chainInflight ?? runChainPass(), timeoutMs);
+}
+
+async function executeChainPass(): Promise<"ran" | "skipped" | "busy"> {
   const pool = chainPool();
   if (!pool || pools.passgramChainActive) return pools.passgramChainActive ? "busy" : "skipped";
   const claim = await pool.query(
@@ -55,11 +90,4 @@ export async function runChainPass(): Promise<"ran" | "skipped" | "busy"> {
   } finally {
     pools.passgramChainActive = false;
   }
-}
-
-/** Confirms payments and removes expired access after the response is sent. */
-export function scheduleChainPass(): void {
-  after(() => {
-    void runChainPass();
-  });
 }

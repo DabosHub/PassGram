@@ -38,6 +38,20 @@ export function JoinCommunityModal({
   );
 }
 
+export function InviteUnavailableNotice({ message }: { message: string }) {
+  return (
+    <div className="fixed inset-x-0 bottom-24 z-40 mx-auto w-full max-w-[430px] px-4">
+      <div
+        role="alert"
+        className="space-y-2 rounded-3xl border border-[var(--pg-line)] bg-[var(--pg-card)] p-5 shadow-[var(--pg-shadow-float)]"
+      >
+        <h2 className="text-lg font-semibold">Join unavailable</h2>
+        <p className="text-sm leading-relaxed text-[var(--pg-hint)]">{message}</p>
+      </div>
+    </div>
+  );
+}
+
 export function openCommunityInvite(inviteLink: string) {
   const telegram = window.Telegram?.WebApp as { openTelegramLink?: (url: string) => void } | undefined;
   if (telegram?.openTelegramLink) {

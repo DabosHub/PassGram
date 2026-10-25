@@ -14,8 +14,13 @@ export function sanitizeTelegramText(value: string): string {
   return value.replace(/bot\d+:[A-Za-z0-9_-]+/g, "bot[redacted]").slice(0, 300);
 }
 
+export type TelegramCallOptions = {
+  /** Skip the short member cache and store this reply for later reads. */
+  fresh?: boolean;
+};
+
 export type TelegramClient = {
-  call: (method: string, body?: Record<string, unknown>) => Promise<any>;
+  call: (method: string, body?: Record<string, unknown>, options?: TelegramCallOptions) => Promise<any>;
 };
 
 const MEMBER_CACHE_MS = 30_000;
@@ -29,10 +34,10 @@ function memberCacheKey(token: string, method: string, body: Record<string, unkn
 
 export function createTelegramClient(token: string): TelegramClient {
   return {
-    async call(method, body) {
+    async call(method, body, options) {
       const cached = method === "getChatMember" || method === "getChatMemberCount";
       const key = cached ? memberCacheKey(token, method, body) : "";
-      if (cached) {
+      if (cached && !options?.fresh) {
         const hit = memberCache.get(key);
         if (hit && Date.now() - hit.at < MEMBER_CACHE_MS) return hit.value;
       }

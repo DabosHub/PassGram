@@ -21,7 +21,7 @@ import { sendRegistryCall } from "@/lib/ton/send";
 import { buildDemoLastTx } from "@/lib/demoLab";
 import { useDemoLab } from "@/lib/demoLabContext";
 import { useOwnerLedger } from "@/lib/useOwnerLedger";
-import { refreshSubscriberLedgerNow } from "@/lib/useSubscriberLedger";
+import { notePaymentAwaitingConfirmation, refreshSubscriberLedgerNow } from "@/lib/useSubscriberLedger";
 import type { AppRoute } from "@/lib/route";
 import { useStore, type CommunityRecord, type PaymentRecord, type SubscriptionRecord } from "@/lib/store";
 import { getConnectedTonAddress } from "@/lib/ton/wallet";
@@ -151,11 +151,9 @@ function Purchase({ community }: { community: CommunityRecord }) {
   const durationDays = Math.max(1, Math.round(community.periodSeconds / 86_400));
 
   useEffect(() => {
-    if (!confirming) return;
-    refreshSubscriberLedgerNow();
-    const timer = window.setInterval(() => refreshSubscriberLedgerNow(), 3_000);
-    return () => window.clearInterval(timer);
-  }, [confirming]);
+    if (!confirming || lab.enabled) return;
+    notePaymentAwaitingConfirmation(community.id);
+  }, [confirming, community.id, lab.enabled]);
   const price = formatUsdt(community.price);
   const members = community.telegramMemberCount;
 
@@ -166,6 +164,7 @@ function Purchase({ community }: { community: CommunityRecord }) {
     try {
       if (lab.enabled) {
         store.setDemoLastTx(buildDemoLastTx());
+        setConfirming(true);
         return;
       }
       if (!getConnectedTonAddress()) {
@@ -291,16 +290,15 @@ function SubscriptionDetail({
   now: number;
 }) {
   const store = useStore();
+  const lab = useDemoLab();
   const [reasons, setReasons] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
-    if (!confirming) return;
-    refreshSubscriberLedgerNow();
-    const timer = window.setInterval(() => refreshSubscriberLedgerNow(), 3_000);
-    return () => window.clearInterval(timer);
-  }, [confirming]);
+    if (!confirming || lab.enabled) return;
+    notePaymentAwaitingConfirmation(community.id);
+  }, [confirming, community.id, lab.enabled]);
   const status = subscriptionStatus({
     confirmation: subscription.confirmation,
     expiresAt: subscription.expiresAt,
@@ -329,6 +327,11 @@ function SubscriptionDetail({
     setBusy(true);
     setReasons([]);
     try {
+      if (lab.enabled) {
+        store.setDemoLastTx(buildDemoLastTx());
+        setConfirming(true);
+        return;
+      }
       if (!getConnectedTonAddress()) {
         const account = await store.connectWallet();
         if (!account) {

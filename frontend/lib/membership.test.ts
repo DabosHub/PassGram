@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import test from "node:test";
-import { resolveSubscriberView } from "./subscriberAccess.ts";
+import {
+  INVITE_ADMIN_ERROR,
+  botCanCreateInvite,
+  inviteGapAction,
+  membershipPollMs,
+  resolveSubscriberView,
+} from "./subscriberAccess.ts";
 import { mergeSubscriberSnapshot, replaceSubscriberSnapshot } from "./subscriberLedger.ts";
 import { assembleOwnerLedger, linkSubscriberWallet } from "./server/membershipFlow.ts";
 import type { MembershipPaymentRow, MembershipRepository, MembershipRow, OwnedCommunityRow } from "./server/membershipRepository.ts";
@@ -198,6 +204,23 @@ test("a subscriber outside the channel keeps the old card until join is verified
   });
   assert.deepEqual(stillInside.hold, []);
   assert.equal(stillInside.offer, null);
+  assert.equal(stillInside.inviteError, null);
+  const blocked = resolveSubscriberView({
+    access: [{ communityId: 9002, communityName: "Builder Lounge", inChannel: false, inviteLink: null, inviteError: INVITE_ADMIN_ERROR }],
+    requiredCommunityIds: [9002],
+    joinAttemptCommunityId: null,
+  });
+  assert.equal(blocked.offer, null);
+  assert.equal(blocked.inviteError, INVITE_ADMIN_ERROR);
+  assert.equal(botCanCreateInvite({ status: "administrator", can_invite_users: false }), false);
+  assert.equal(botCanCreateInvite({ status: "administrator", can_invite_users: true }), true);
+  assert.equal(botCanCreateInvite({ status: "left" }), false);
+  assert.equal(botCanCreateInvite(null), null);
+  assert.equal(inviteGapAction({ inChannel: false, inviteLink: null, botCanInvite: false }), "error");
+  assert.equal(inviteGapAction({ inChannel: false, inviteLink: null, botCanInvite: true }), "recover");
+  assert.equal(inviteGapAction({ inChannel: true, inviteLink: null, botCanInvite: false }), "ready");
+  assert.equal(membershipPollMs(false), 15_000);
+  assert.equal(membershipPollMs(true), 3_000);
 });
 
 function signedInitData(userId: number, authDate: number) {

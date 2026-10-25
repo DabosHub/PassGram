@@ -5,7 +5,7 @@ import { limitedResponse } from "@/lib/server/rateLimit";
 import { ChannelConfigError } from "@/lib/server/channelDeps";
 import { validateInitData } from "@/lib/server/initData";
 import { readSubscriberLedger } from "@/lib/server/membershipFlow";
-import { scheduleChainPass } from "@/lib/server/chainMaintenance";
+import { awaitChainPass, CHAIN_PASS_WAIT_MS } from "@/lib/server/chainMaintenance";
 import { readSubscriberAccess } from "@/lib/server/subscriberAccessFlow";
 
 export async function GET(request: Request) {
@@ -17,11 +17,26 @@ export async function GET(request: Request) {
   }
   try {
     const initData = request.headers.get("x-telegram-init-data") || "";
+    const identity = validateInitData(initData, botToken);
+    if (!identity) {
+      return Response.json(
+        { ok: false, message: "Open PassGram from Telegram so your account can be confirmed." },
+        { status: 401 },
+      );
+    }
+    let pass: "ran" | "skipped" | "busy" | "timeout" = "skipped";
+    try {
+      pass = await awaitChainPass(CHAIN_PASS_WAIT_MS);
+    } catch {
+      console.error("chain pass failed");
+    }
     const result = await readSubscriberLedger(initData, botToken);
     if (!result.ok) return Response.json(result, { status: 401 });
-    const identity = validateInitData(initData, botToken);
-    if (identity) scheduleChainPass();
-    const access = identity ? await readSubscriberAccess(botToken, identity.userId) : [];
+    const freshMember = request.headers.get("x-passgram-fresh-member") === "1";
+    const access = await readSubscriberAccess(botToken, identity.userId, undefined, {
+      fresh: freshMember,
+      recoverInvites: pass !== "timeout",
+    });
     return Response.json({ ...result, access });
   } catch (error) {
     if (error instanceof ChannelConfigError) {

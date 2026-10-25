@@ -56,6 +56,11 @@ export type SubscriberInviteRow = {
   inviteLink: string;
 };
 
+export type MissingInviteRow = {
+  transactionReference: string;
+  expiresAtMs: number;
+};
+
 export type TelegramProfileInput = {
   telegramUserId: number;
   displayName: string;
@@ -71,6 +76,8 @@ export interface MembershipRepository {
   listSubscriberPayments(telegramUserId: number): Promise<MembershipPaymentRow[]>;
   listSubscriberChannels(telegramUserId: number): Promise<SubscriberChannelRow[]>;
   listSubscriberInvites(telegramUserId: number): Promise<SubscriberInviteRow[]>;
+  missingSubscriberInvite(telegramUserId: number, communityId: number): Promise<MissingInviteRow | null>;
+  saveSubscriberInvite(telegramUserId: number, communityId: number, transactionReference: string, inviteLink: string): Promise<void>;
   linkTonWallet(telegramUserId: number, tonAddress: string): Promise<"linked" | "taken">;
   getLinkedWallet(telegramUserId: number): Promise<string | null>;
   upsertProfile(profile: TelegramProfileInput): Promise<void>;
@@ -308,7 +315,9 @@ class PostgresMembershipRepository implements MembershipRepository {
       `select m.community_id, c.title, c.telegram_chat_id
        from community_memberships m
        join creator_communities c on c.community_id = m.community_id
-       where m.subscriber_telegram_user_id = $1 and m.confirmation = 'confirmed'`,
+       where m.subscriber_telegram_user_id = $1
+         and m.confirmation = 'confirmed'
+         and coalesce(m.expires_at_ms, 0) > (extract(epoch from clock_timestamp()) * 1000)`,
       [telegramUserId],
     );
     return result.rows.map((row) => ({
@@ -320,19 +329,75 @@ class PostgresMembershipRepository implements MembershipRepository {
 
   async listSubscriberInvites(telegramUserId: number): Promise<SubscriberInviteRow[]> {
     const result = await this.pool.query<{ community_id: string; invite_link: string }>(
-      `select distinct on (community_id) community_id, invite_link
-       from community_membership_payments
-       where subscriber_telegram_user_id = $1
-         and status = 'confirmed'
-         and invite_link is not null
-         and invite_link <> ''
-       order by community_id, paid_at_ms desc`,
+      `select distinct on (p.community_id) p.community_id, p.invite_link
+       from community_membership_payments p
+       join community_memberships m
+         on m.community_id = p.community_id
+        and m.subscriber_telegram_user_id = p.subscriber_telegram_user_id
+       where p.subscriber_telegram_user_id = $1
+         and p.status = 'confirmed'
+         and m.confirmation = 'confirmed'
+         and coalesce(m.expires_at_ms, 0) > (extract(epoch from clock_timestamp()) * 1000)
+         and p.invite_link is not null
+         and p.invite_link <> ''
+       order by p.community_id, p.paid_at_ms desc`,
       [telegramUserId],
     );
     return result.rows.map((row) => ({
       communityId: Number(row.community_id),
       inviteLink: row.invite_link,
     }));
+  }
+
+  async missingSubscriberInvite(telegramUserId: number, communityId: number): Promise<MissingInviteRow | null> {
+    const result = await this.pool.query<{ transaction_reference: string | null; expires_at_ms: string }>(
+      `select p.transaction_reference, m.expires_at_ms
+       from community_membership_payments p
+       join community_memberships m
+         on m.community_id = p.community_id
+        and m.subscriber_telegram_user_id = p.subscriber_telegram_user_id
+       where p.subscriber_telegram_user_id = $1
+         and p.community_id = $2
+         and p.status = 'confirmed'
+         and m.confirmation = 'confirmed'
+         and coalesce(m.expires_at_ms, 0) > (extract(epoch from clock_timestamp()) * 1000)
+         and (p.invite_link is null or p.invite_link = '')
+         and p.transaction_reference is not null
+         and p.transaction_reference <> ''
+       order by p.paid_at_ms desc
+       limit 1`,
+      [telegramUserId, communityId],
+    );
+    const row = result.rows[0];
+    if (!row?.transaction_reference) return null;
+    const expiresAtMs = Number(row.expires_at_ms);
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) return null;
+    return { transactionReference: row.transaction_reference, expiresAtMs };
+  }
+
+  async saveSubscriberInvite(
+    telegramUserId: number,
+    communityId: number,
+    transactionReference: string,
+    inviteLink: string,
+  ): Promise<void> {
+    await this.pool.query(
+      `update community_membership_payments
+       set invite_link = $4
+       where subscriber_telegram_user_id = $1
+         and community_id = $2
+         and transaction_reference = $3
+         and status = 'confirmed'
+         and (invite_link is null or invite_link = '')`,
+      [telegramUserId, communityId, transactionReference, inviteLink],
+    );
+    await this.pool.query(
+      `update payments
+       set invite_link = $2
+       where tx_hash = $1
+         and (invite_link is null or invite_link = '')`,
+      [transactionReference, inviteLink],
+    );
   }
 
   async linkTonWallet(telegramUserId: number, tonAddress: string): Promise<"linked" | "taken"> {

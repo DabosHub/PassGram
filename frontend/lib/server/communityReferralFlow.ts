@@ -266,6 +266,8 @@ export async function createCommunityReferralLink(
           percentLabel: formatCommunityReferralPercent(community.referralPercentBps),
           code,
         }),
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
         reply_markup: {
           inline_keyboard: [[{ text: "Open community", url: communityReferralNoticeUrl(communityId) }]],
         },

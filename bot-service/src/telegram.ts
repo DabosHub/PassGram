@@ -89,6 +89,8 @@ export function createTelegramClient(botToken: string): TelegramClient {
       const result = await call("sendMessage", {
         chat_id: Number(userId),
         text,
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
         reply_markup: button
           ? { inline_keyboard: [[{ text: button.text, url: button.url }]] }
           : undefined,

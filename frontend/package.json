@@ -9,7 +9,7 @@
     "dev": "next dev",
     "build": "npm ci --include=dev --prefix ../bot-service && next build",
     "start": "next start",
-    "test": "node --experimental-strip-types --import ./lib/test-register.mjs --test lib/domain.test.ts lib/initData.test.ts lib/rateLimit.test.ts lib/channel.test.ts lib/referral.test.ts lib/communityReferral.test.ts lib/membership.test.ts lib/sessionSnapshot.test.ts lib/walletProof.test.ts lib/ton/registry.test.ts lib/server/ownerKey.test.ts lib/server/registryCode.test.ts lib/server/adminAuth.test.ts lib/server/adminView.test.ts lib/server/databaseSsl.test.ts lib/server/telegramWebhook.test.ts lib/server/cronAuth.test.ts lib/server/chainMaintenance.test.ts lib/server/telegramClient.test.ts lib/server/subscriberAccessFlow.test.ts"
+    "test": "node --experimental-strip-types --import ./lib/test-register.mjs --test lib/domain.test.ts lib/initData.test.ts lib/rateLimit.test.ts lib/channel.test.ts lib/referral.test.ts lib/communityReferral.test.ts lib/membership.test.ts lib/sessionSnapshot.test.ts lib/walletProof.test.ts lib/ton/registry.test.ts lib/server/ownerKey.test.ts lib/server/registryCode.test.ts lib/server/adminAuth.test.ts lib/server/adminView.test.ts lib/server/databaseSsl.test.ts lib/server/telegramWebhook.test.ts lib/server/cronAuth.test.ts lib/server/chainMaintenance.test.ts lib/server/telegramClient.test.ts lib/server/subscriberAccessFlow.test.ts lib/projectHome.test.ts"
   },
   "dependencies": {
     "@telegram-apps/sdk": "^3.11.8",

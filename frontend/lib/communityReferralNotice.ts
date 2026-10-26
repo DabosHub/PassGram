@@ -1,4 +1,5 @@
 import { miniAppShortNameFrom } from "./domain";
+import { cleanLabel, telegramNote, tgBold } from "./telegramText";
 
 export type CommunityReferralNoticeKind = "activated" | "updated" | "stopped";
 
@@ -22,20 +23,38 @@ export function communityReferralNoticeText(input: {
   title: string;
   percentLabel: string;
 }): string {
-  const name = input.title.replace(/\s+/g, " ").trim().slice(0, 80) || "A community you subscribe to";
+  const name = tgBold(cleanLabel(input.title, "This community"));
+  const percent = tgBold(`${cleanLabel(input.percentLabel, "0", 8)}%`);
   if (input.kind === "activated") {
-    return `${name} started a referral program. As a subscriber you can share it and earn ${input.percentLabel}% of each payment from someone you refer. The price they pay does not change.`;
+    return telegramNote("Referral program", [
+      `${name} started a referral program.`,
+      `Share it and earn ${percent} of the creator's share from each person you refer. Their price does not change.`,
+    ]);
   }
   if (input.kind === "updated") {
-    return `${name} changed its referral rate to ${input.percentLabel}%. New referrals use this rate. Referrals you already registered keep their original rate.`;
+    return telegramNote("Referral rate", [
+      `${name} now pays ${percent} on new referrals.`,
+      "Links you already registered keep their original rate.",
+    ]);
   }
-  return `${name} stopped its referral program. New referrals are closed. Referrals you already registered still earn their original rate.`;
+  return telegramNote("Referrals closed", [
+    `${name} stopped its referral program.`,
+    "New referrals are closed. Links you already registered still earn their original rate.",
+  ]);
+}
+
+export function communityReferralButtonLabel(kind: CommunityReferralNoticeKind): string {
+  return kind === "activated" ? "Create referral link" : "Open community";
 }
 
 export function creatorReferralLinkNoticeText(input: { title: string; percentLabel: string; code: string }): string {
-  const name = input.title.replace(/\s+/g, " ").trim().slice(0, 80) || "your community";
+  const name = tgBold(cleanLabel(input.title, "your community"));
+  const percent = tgBold(`${cleanLabel(input.percentLabel, "0", 8)}%`);
   const code = input.code.replace(/[^a-z0-9_-]/gi, "").slice(0, 32);
-  return `A marketer created a referral link for ${name}${code ? ` (code ${code})` : ""}. They earn ${input.percentLabel}% of each subscriber payment they refer. The subscriber price does not change.`;
+  return telegramNote("New referral link", [
+    `A marketer created a link for ${name}.`,
+    `They earn ${percent} of your share from each subscriber they refer. The subscriber price does not change.${code ? ` Code: ${tgBold(code)}.` : ""}`,
+  ]);
 }
 
 /** Sent to the referrer, whatever their role, after the referred action is confirmed. */
@@ -45,14 +64,14 @@ export function referralConversionNoticeText(input: {
   actorName: string;
   percentLabel?: string;
 }): string {
-  const who = input.actorName.replace(/\s+/g, " ").trim().slice(0, 80) || "Someone you referred";
-  const name = input.title.replace(/\s+/g, " ").trim().slice(0, 80) || "a community";
+  const who = tgBold(cleanLabel(input.actorName, "Someone you referred"));
+  const name = tgBold(cleanLabel(input.title, "a community"));
   if (input.program === "passgram") {
-    return `${who} created ${name} through your PassGram referral.`;
+    return telegramNote("New community", [`${who} created ${name} through your PassGram referral.`]);
   }
   const percent = (input.percentLabel || "").trim();
-  const earn = percent ? ` You earn ${percent}% of that payment.` : "";
-  return `${who} subscribed to ${name} through your community referral.${earn}`;
+  const earn = percent ? ` You earn ${tgBold(`${percent}%`)} of the creator's share on that payment.` : "";
+  return telegramNote("Referral earned", [`${who} subscribed to ${name} through your link.${earn}`]);
 }
 
 /** One chat. Skips the actor and any id that is not a Telegram user id. A failed send does not undo the action. */
@@ -68,6 +87,8 @@ export async function deliverReferralConversionNotice(input: {
     await input.telegram.call("sendMessage", {
       chat_id: Number(input.recipientId),
       text: input.text,
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
       reply_markup: { inline_keyboard: [[{ text: "Open community", url: input.url }]] },
     });
     return true;
@@ -89,6 +110,7 @@ export async function deliverCommunityReferralNotice(input: {
   ownerTelegramUserId: string;
   text: string;
   url: string;
+  buttonText?: string;
 }): Promise<string[]> {
   const sent: string[] = [];
   for (const id of input.subscriberIds) {
@@ -97,7 +119,9 @@ export async function deliverCommunityReferralNotice(input: {
       await input.telegram.call("sendMessage", {
         chat_id: Number(id),
         text: input.text,
-        reply_markup: { inline_keyboard: [[{ text: "Open community", url: input.url }]] },
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+        reply_markup: { inline_keyboard: [[{ text: input.buttonText || "Open community", url: input.url }]] },
       });
       sent.push(id);
     } catch {

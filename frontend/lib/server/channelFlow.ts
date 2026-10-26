@@ -18,6 +18,7 @@ import {
   communityReferralNoticeKind,
   communityReferralNoticeText,
   communityReferralNoticeUrl,
+  communityReferralButtonLabel,
   deliverCommunityReferralNotice,
   deliverReferralConversionNotice,
   referralConversionNoticeText,
@@ -32,6 +33,16 @@ import { Cell } from "@ton/core";
 import { bocContainsCell, buildRegisterCommunityBody } from "../ton/registry";
 import { authorizeCommunityRegistration } from "./communityAuthorization";
 import { downloadTelegramFile, TelegramApiError, type TelegramClient } from "./telegramClient";
+import { formatMiniAppHomeLink } from "../domain";
+import { botRightsReadyText, channelRightsNeededText, channelVerifiedText, cleanLabel } from "../telegramText";
+import {
+  announceOnProjectChannel,
+  communityJoinUrl,
+  communityLaunchText,
+  presentProjectHome,
+  publicCreatorLabel,
+  referralLaunchText,
+} from "../projectHome";
 
 export type ChannelDeps = {
   repo: ChannelRepository;
@@ -130,6 +141,7 @@ export async function prepareChannelSelection(deps: ChannelDeps, initData: strin
 }
 
 export async function ingestTelegramUpdate(deps: ChannelDeps, update: unknown): Promise<{ ok: true }> {
+  await presentProjectHome(deps.telegram, update);
   const shared = readChatShared(update);
   if (shared) {
     const selection = await deps.repo.getSelection(shared.requestId);
@@ -187,8 +199,10 @@ export async function ingestTelegramUpdate(deps: ChannelDeps, update: unknown): 
           try {
             await deps.telegram.call("sendMessage", {
               chat_id: Number(existing.ownerTelegramUserId),
-              text: `PassGramBot is now an admin of “${existing.title}” with invite and ban rights. Open PassGram to finish creating your community.`,
+              text: botRightsReadyText(existing.title),
+              parse_mode: "HTML",
               disable_web_page_preview: true,
+              reply_markup: { inline_keyboard: [[{ text: "Open PassGram", url: formatMiniAppHomeLink() }]] },
             });
           } catch {
             // Mini App Check bot access still works without this DM.
@@ -430,6 +444,14 @@ export async function confirmCommunityRegistration(
   });
   if (!saved) {
     return fail("verification_failed", "This community signature could not be stored.");
+  }
+  if (saved.newlyActive && saved.row.communityId) {
+    await announceOnProjectChannel(
+      deps.telegram,
+      communityLaunchText(publicCreatorLabel(identity.displayName, identity.username), saved.row.title),
+      "Subscribe now",
+      communityJoinUrl(saved.row.communityId),
+    );
   }
   if (saved.newlyActive && channel.referrerTelegramUserId && saved.row.communityId) {
     await deliverReferralConversionNotice({
@@ -705,25 +727,16 @@ async function notifyOwnerChannelReceived(
   status: ChannelUiState,
 ): Promise<void> {
   if (!ownershipVerified(status)) return;
-  const label = title?.trim() || "your private channel";
+  const label = cleanLabel(title || "", "your channel");
   const text =
-    status === "verified"
-      ? `PassGram verified “${label}” and @PassGramBot already has invite and ban rights. Open the Mini App to finish creating your community.`
-      : [
-          `PassGram verified ownership of “${label}”.`,
-          "",
-          "Next: open the channel → Administrators → Add Admin → @PassGramBot.",
-          "Enable only:",
-          "• Invite users via link",
-          "• Ban users",
-          "",
-          "Leave other permissions off, then return to PassGram — it updates automatically when Telegram notifies the bot, or tap Check bot access.",
-        ].join("\n");
+    status === "verified" ? channelVerifiedText(label) : channelRightsNeededText(label);
   try {
     await deps.telegram.call("sendMessage", {
       chat_id: Number(ownerUserId),
       text,
+      parse_mode: "HTML",
       disable_web_page_preview: true,
+      reply_markup: { inline_keyboard: [[{ text: "Open PassGram", url: formatMiniAppHomeLink() }]] },
     });
   } catch {
     // Owner may not have started the bot yet; Mini App UI still shows the same instructions.
@@ -892,6 +905,14 @@ export async function updateCommunityReferralSettings(
       kind: noticeKind,
       percentLabel,
     });
+    if (noticeKind === "activated") {
+      await announceOnProjectChannel(
+        deps.telegram,
+        referralLaunchText(publicCreatorLabel(identity.displayName, identity.username), row.title, percentLabel),
+        "Create referral link",
+        communityReferralNoticeUrl(row.communityId),
+      );
+    }
   }
   return {
     ok: true,
@@ -921,6 +942,7 @@ async function sendCommunityReferralNotice(
       ownerTelegramUserId: input.ownerTelegramUserId,
       text: communityReferralNoticeText(input),
       url: communityReferralNoticeUrl(input.communityId),
+      buttonText: communityReferralButtonLabel(input.kind),
     });
   } catch {
     /* The referral setting is already saved. A notice failure does not roll it back. */

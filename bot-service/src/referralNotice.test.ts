@@ -3,11 +3,15 @@ import test from "node:test";
 import { communityOpenUrl, communityReferralPaidNotice, notifyCommunityReferralPaid } from "./referralNotice.ts";
 
 test("a confirmed community referral payment messages the referrer once per call", async () => {
-  assert.equal(
+  assert.match(
     communityReferralPaidNotice({ title: "  Alpha   Signals ", actorName: "Lina Nasser", percentLabel: "10" }),
-    "Lina Nasser subscribed to Alpha Signals through your community referral. You earn 10% of that payment.",
+    /Referral earned/,
   );
-  assert.match(communityReferralPaidNotice({ title: "", actorName: "", percentLabel: "" }), /^Someone you referred subscribed/);
+  assert.match(
+    communityReferralPaidNotice({ title: "  Alpha   Signals ", actorName: "Lina Nasser", percentLabel: "10" }),
+    /creator's share/,
+  );
+  assert.match(communityReferralPaidNotice({ title: "", actorName: "", percentLabel: "" }), /Someone you referred/);
   assert.equal(communityOpenUrl(7, { TELEGRAM_BOT_USERNAME: "@PassGramBot" }), "https://t.me/PassGramBot/passgram?startapp=c_7");
 
   const sent: string[] = [];
@@ -44,5 +48,7 @@ test("a confirmed community referral payment messages the referrer once per call
   assert.equal(notified, true);
   assert.equal(self, false);
   assert.equal(missing, false);
-  assert.deepEqual(sent, ["9:Lina Nasser subscribed to Alpha Signals through your community referral. You earn 15% of that payment."]);
+  assert.match(sent[0] || "", /^9:/);
+  assert.match(sent[0] || "", /15%/);
+  assert.match(sent[0] || "", /creator's share/);
 });

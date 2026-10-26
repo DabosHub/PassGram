@@ -250,7 +250,7 @@ test("referral program changes notify current subscribers and skip the owner", a
   assert.equal(communityReferralNoticeKind({ referralEnabled: false, referralPercentBps: 0 }, { referralEnabled: true, referralPercentBps: 1000 }), "activated");
   assert.equal(communityReferralNoticeKind({ referralEnabled: true, referralPercentBps: 1000 }, { referralEnabled: true, referralPercentBps: 2000 }), "updated");
   assert.equal(communityReferralNoticeKind({ referralEnabled: true, referralPercentBps: 1000 }, { referralEnabled: false, referralPercentBps: 1000 }), "stopped");
-  assert.match(communityReferralNoticeText({ kind: "activated", title: "Alpha", percentLabel: "10" }), /earn 10%/);
+  assert.match(communityReferralNoticeText({ kind: "activated", title: "Alpha", percentLabel: "10" }), /10%/);
   assert.match(communityReferralNoticeText({ kind: "stopped", title: "Alpha", percentLabel: "10" }), /stopped its referral program/);
 
   const sent: string[] = [];
@@ -287,13 +287,15 @@ test("referral program changes notify current subscribers and skip the owner", a
   };
   const activated = await updateCommunityReferralSettings(deps, sign(42), { communityId: 7, enabled: true, percent: "10" });
   assert.equal(activated.ok, true);
-  assert.equal(messages.length, 1);
+  assert.equal(messages.length, 2);
   assert.match(messages[0], /started a referral program/);
   assert.match(messages[0], /10%/);
+  assert.match(messages[1], /turned on referrals/);
+  assert.match(messages[1], /creator's share/);
 });
 
 test("the community creator is notified once when a marketer creates a referral link", async () => {
-  assert.match(creatorReferralLinkNoticeText({ title: "Alpha", percentLabel: "10", code: "mira" }), /code mira/);
+  assert.match(creatorReferralLinkNoticeText({ title: "Alpha", percentLabel: "10", code: "mira" }), /mira/);
   const repo = new MemoryChannelRepository();
   await repo.saveChannel(channel({ referralEnabled: true, referralPercentBps: 1000 }));
   const messages: string[] = [];
@@ -322,7 +324,8 @@ test("the community creator is notified once when a marketer creates a referral 
   assert.equal(second.payoutAccount, firstProof.address);
   assert.match(second.message, /first confirmed/);
   assert.deepEqual(messages, ["42", messages[1]]);
-  assert.match(messages[1], /created a referral link for Alpha/);
+  assert.match(messages[1], /created a link for/);
+  assert.match(messages[1], /Alpha/);
   assert.match(messages[1], /10%/);
 });
 
@@ -368,14 +371,9 @@ test("each community referral link keeps its own payout and ignores a PassGram a
 });
 
 test("a converted referral messages the referrer for either program and skips the actor", async () => {
-  assert.equal(
-    referralConversionNoticeText({ program: "community", title: "Alpha Signals", actorName: "Lina Nasser", percentLabel: "10" }),
-    "Lina Nasser subscribed to Alpha Signals through your community referral. You earn 10% of that payment.",
-  );
-  assert.equal(
-    referralConversionNoticeText({ program: "passgram", title: "Builder Lounge", actorName: "" }),
-    "Someone you referred created Builder Lounge through your PassGram referral.",
-  );
+  assert.match(referralConversionNoticeText({ program: "community", title: "Alpha Signals", actorName: "Lina Nasser", percentLabel: "10" }), /Referral earned/);
+  assert.match(referralConversionNoticeText({ program: "community", title: "Alpha Signals", actorName: "Lina Nasser", percentLabel: "10" }), /creator's share/);
+  assert.match(referralConversionNoticeText({ program: "passgram", title: "Builder Lounge", actorName: "" }), /New community/);
   const sent: string[] = [];
   const delivered = await deliverReferralConversionNotice({
     telegram: {

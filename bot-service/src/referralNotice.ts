@@ -1,9 +1,6 @@
 import type { CommunityReferralConversion } from "./db.ts";
 import { miniAppCommunityUrl } from "./miniAppName.ts";
-
-function clean(value: string, fallback: string): string {
-  return value.replace(/\s+/g, " ").trim().slice(0, 80) || fallback;
-}
+import { cleanLabel, telegramNote, tgBold } from "./telegramText.ts";
 
 export function formatLockedPercent(bps: number): string {
   if (!Number.isFinite(bps) || bps <= 0) return "";
@@ -11,13 +8,13 @@ export function formatLockedPercent(bps: number): string {
   return Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100);
 }
 
-/** Same sentence the Mini App uses for a confirmed community-referral payment. */
+/** Same notice the Mini App sends for a confirmed community-referral payment. */
 export function communityReferralPaidNotice(input: { title: string; actorName: string; percentLabel: string }): string {
-  const who = clean(input.actorName, "Someone you referred");
-  const name = clean(input.title, "a community");
+  const who = tgBold(cleanLabel(input.actorName, "Someone you referred"));
+  const name = tgBold(cleanLabel(input.title, "a community"));
   const percent = input.percentLabel.trim();
-  const earn = percent ? ` You earn ${percent}% of that payment.` : "";
-  return `${who} subscribed to ${name} through your community referral.${earn}`;
+  const earn = percent ? ` You earn ${tgBold(`${percent}%`)} of the creator's share on that payment.` : "";
+  return telegramNote("Referral earned", [`${who} subscribed to ${name} through your link.${earn}`]);
 }
 
 export function communityOpenUrl(communityId: number, env: NodeJS.ProcessEnv = process.env): string {

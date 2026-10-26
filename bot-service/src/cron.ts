@@ -4,13 +4,17 @@ import { createPool, listDueRenewalReminders, listExpiredSubscriptions, markAcce
 import { createShutdown, sleep } from "./lifecycle.ts";
 import { sanitizeError } from "./log.ts";
 import { createTelegramClient } from "./telegram.ts";
+import { cleanLabel, telegramNote, tgBold } from "./telegramText.ts";
 import type { Pool } from "pg";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function renewalReminderText(title: string): string {
-  const name = title.replace(/\s+/g, " ").trim().slice(0, 80) || "your community";
-  return `1 day left on your subscription to ${name}. Renew before it ends, or your access to the channel will be removed.`;
+  const name = tgBold(cleanLabel(title, "your community"));
+  return telegramNote("1 day left", [
+    `Your subscription to ${name} ends tomorrow.`,
+    "Renew to keep access. When the period ends, access is removed.",
+  ]);
 }
 
 export function renewalMiniAppUrl(communityId: number, env: NodeJS.ProcessEnv = process.env): string {

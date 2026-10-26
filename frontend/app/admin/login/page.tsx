@@ -4,9 +4,23 @@ import { adminTelegramIds } from "@/lib/server/adminAuth";
 import { currentAdmin } from "@/lib/server/adminSession";
 import { redirect } from "next/navigation";
 
-export default async function AdminLoginPage() {
+const SIGN_IN_ERRORS: Record<string, string> = {
+  closed: "Admin sign-in is not configured.",
+  denied: "This Telegram account cannot open the admin console.",
+  invalid: "Telegram could not confirm this sign-in.",
+  limited: "Too many sign-in attempts. Wait a minute and try again.",
+};
+
+export default async function AdminLoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const session = await currentAdmin();
   if (session) redirect("/admin");
+  const raw = await searchParams;
+  const errorCode = Array.isArray(raw.error) ? raw.error[0] : raw.error;
+  const error = errorCode ? SIGN_IN_ERRORS[errorCode] : undefined;
   const username = (process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || "").replace(/^@/, "").trim();
   const ready = Boolean(process.env.TELEGRAM_BOT_TOKEN?.trim() && username && adminTelegramIds().size > 0);
   return (
@@ -24,11 +38,7 @@ export default async function AdminLoginPage() {
             </p>
           )}
         </div>
-        {ready ? (
-          <p className="mt-6 text-[13px] text-[var(--pg-hint)]">
-            Link this site&apos;s domain to the bot in BotFather before Telegram Login will open.
-          </p>
-        ) : null}
+        {error ? <p className="mt-6 text-[14px] text-[var(--pg-ruby)]">{error}</p> : null}
       </section>
     </main>
   );

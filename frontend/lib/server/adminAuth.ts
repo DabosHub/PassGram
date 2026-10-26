@@ -66,8 +66,8 @@ export function validateTelegramLogin(
   const computed = crypto.createHmac("sha256", secret).update(dataCheck).digest("hex");
   if (!safeEqual(computed, hash)) return null;
 
-  const id = typeof record.id === "number" ? record.id : Number.NaN;
-  const authDate = typeof record.auth_date === "number" ? record.auth_date : Number.NaN;
+  const id = integerField(record.id);
+  const authDate = integerField(record.auth_date);
   if (!Number.isSafeInteger(id) || id <= 0) return null;
   if (!Number.isFinite(authDate) || authDate <= 0 || nowSeconds - authDate > LOGIN_MAX_AGE_SECONDS || authDate - nowSeconds > 60) {
     return null;
@@ -133,6 +133,15 @@ export function allowAdminSignIn(now = Date.now()): boolean {
   if (current.count >= SIGN_IN_LIMIT) return false;
   current.count += 1;
   return true;
+}
+
+function integerField(value: unknown): number {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return value;
+  if (typeof value === "string" && /^[1-9]\d{0,15}$/.test(value)) {
+    const parsed = Number(value);
+    if (Number.isSafeInteger(parsed) && String(parsed) === value) return parsed;
+  }
+  return Number.NaN;
 }
 
 function sessionMac(payload: string, botToken: string): string {

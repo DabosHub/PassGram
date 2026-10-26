@@ -9,8 +9,31 @@ import {
   validateTelegramLogin,
 } from "@/lib/server/adminAuth";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 
 export const runtime = "nodejs";
+
+/** Telegram Login returns here in the browser address bar, with the signed fields as query parameters. */
+export async function GET(request: Request) {
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim() || "";
+  const allowlist = adminTelegramIds();
+  if (!token || allowlist.size === 0) redirect("/admin/login?error=closed");
+  const site = request.headers.get("sec-fetch-site");
+  if (site && site !== "same-origin" && site !== "none") redirect("/admin/login?error=invalid");
+  if (!allowAdminSignIn()) redirect("/admin/login?error=limited");
+  const url = new URL(request.url);
+  const payload: Record<string, string> = {};
+  for (const [key, value] of url.searchParams) {
+    if (!/^[a-z0-9_]{1,64}$/.test(key) || payload[key] !== undefined) redirect("/admin/login?error=invalid");
+    payload[key] = value;
+  }
+  const identity = validateTelegramLogin(payload, token);
+  if (!identity) redirect("/admin/login?error=invalid");
+  if (!allowlist.has(identity.userId)) redirect("/admin/login?error=denied");
+  const jar = await cookies();
+  jar.set(ADMIN_COOKIE, signAdminSession(identity.userId, token), adminCookieOptions(SESSION_TTL_SECONDS));
+  redirect("/admin");
+}
 
 export async function POST(request: Request) {
   const token = process.env.TELEGRAM_BOT_TOKEN?.trim() || "";

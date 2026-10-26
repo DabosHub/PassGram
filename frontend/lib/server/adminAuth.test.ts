@@ -29,6 +29,8 @@ test("Telegram Login hash accepts the fields Telegram signed", () => {
   assert.equal(identity?.userId, 42);
   assert.equal(identity?.displayName, "Ada");
   assert.equal(identity?.username, "ada");
+  const fromAddressBar = validateTelegramLogin({ ...fields, hash: loginHash(fields, TOKEN) }, TOKEN, authDate);
+  assert.equal(fromAddressBar?.userId, 42);
 });
 
 test("Telegram Login rejects a payload whose id changed after signing", () => {

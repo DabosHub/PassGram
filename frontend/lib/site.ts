@@ -6,6 +6,9 @@ export const BOT_URL = "https://t.me/PassGramBot";
 export const MINI_APP_URL = formatMiniAppHomeLink();
 export const BOT_HANDLE = "@PassGramBot";
 export const GITHUB_URL = "https://github.com/DabosHub/PassGram";
+export const X_URL = "https://x.com/PassGramApp";
+export const TELEGRAM_CHANNEL_URL = "https://t.me/PassGramOfficial";
+export const TELEGRAM_GROUP_URL = "https://t.me/PassGramChat";
 export const REGISTRY_ADDRESS = CURRENT_REGISTRY;
 
 export function registryAddress(): string {

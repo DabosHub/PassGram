@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Logo } from "@/components/Logo";
 import { SiteBackLink } from "@/components/site/SiteBackLink";
-import { BOT_HANDLE, BOT_URL, GITHUB_URL, MINI_APP_URL } from "@/lib/site";
+import { BOT_HANDLE, BOT_URL, GITHUB_URL, MINI_APP_URL, TELEGRAM_CHANNEL_URL, TELEGRAM_GROUP_URL, X_URL } from "@/lib/site";
 
 const primaryLink =
   "inline-flex min-h-11 items-center justify-center rounded-full bg-[var(--pg-blue)] px-4 py-2 text-base font-normal text-white no-underline active:bg-[var(--pg-blue-press)]";
@@ -87,6 +87,18 @@ export function SiteFrame({
               Paid Telegram communities in USDT on TON.
             </p>
           </div>
+          <nav aria-label="Social" className="flex flex-col gap-2 text-sm">
+            <p className="text-xs text-[var(--pg-hint)]">Social</p>
+            <a className={textLink} href={X_URL} target="_blank" rel="noopener noreferrer">
+              X
+            </a>
+            <a className={textLink} href={TELEGRAM_CHANNEL_URL} target="_blank" rel="noopener noreferrer">
+              Telegram channel
+            </a>
+            <a className={textLink} href={TELEGRAM_GROUP_URL} target="_blank" rel="noopener noreferrer">
+              Telegram group
+            </a>
+          </nav>
           <div className="grid grid-cols-2 gap-x-10 gap-y-2 text-sm">
             <a className={textLink} href={BOT_URL} rel="noopener noreferrer">
               {BOT_HANDLE}

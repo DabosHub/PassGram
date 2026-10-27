@@ -344,3 +344,43 @@ test("a second owner cannot register the same channel", async () => {
   const missing = nextActivation(null, { ownerTelegramUserId: "42", priceUsdt: "1500000", durationDays: 7, payoutAccount: "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs" });
   assert.equal(missing.result, "missing");
 });
+
+test("checking access before the bot is added keeps the shared channel name and photo", async () => {
+  const repo = new MemoryChannelRepository();
+  const deps: ChannelDeps = {
+    repo,
+    telegram: {
+      async call(method) {
+        if (method === "savePreparedKeyboardButton") return { id: "prepared-button" };
+        if (method === "getChat") throw new TelegramApiError("chat not found", 400);
+        if (method === "sendMessage") return {};
+        throw new Error(method);
+      },
+    },
+    botToken: token,
+    botUserId: "555",
+    now: () => Date.now(),
+    accountStatus: async () => "exists",
+  };
+  const prepared = await prepareChannelSelection(deps, sign(42));
+  await ingestTelegramUpdate(deps, {
+    message: {
+      from: { id: 42 },
+      chat_shared: {
+        request_id: prepared.requestId,
+        chat_id: -100777,
+        title: "Alpha Signals",
+        photo: [
+          { file_id: "small", width: 100, height: 100 },
+          { file_id: "big", width: 640, height: 640 },
+        ],
+      },
+    },
+  });
+  assert.equal((await repo.getChannel("-100777"))?.title, "Alpha Signals");
+  assert.equal((await repo.getChannel("-100777"))?.photoFileId, "big");
+  const again = await recheckChannelAccess(deps, sign(42), "-100777");
+  assert.equal(again.channel?.title, "Alpha Signals");
+  assert.equal(again.channel?.hasPhoto, true);
+  assert.equal((await repo.getChannel("-100777"))?.photoFileId, "big");
+});

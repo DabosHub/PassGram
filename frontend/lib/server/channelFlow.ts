@@ -549,11 +549,13 @@ export async function recheckChannelAccess(deps: ChannelDeps, initData: string, 
   }
   let snapshot: ChannelSnapshot;
   try {
-    const outcome = await verifyChat(deps, telegramChatId, String(identity.userId));
+    const outcome = await verifyChat(deps, telegramChatId, String(identity.userId), existing.title, existing.photoFileId);
     if (outcome.snapshot) {
       snapshot = {
         ...existing,
         ...outcome.snapshot,
+        title: keptChannelLabel(existing.title, outcome.snapshot.title),
+        photoFileId: outcome.snapshot.photoFileId || existing.photoFileId,
         payoutAccount: existing.payoutAccount,
         priceUsdt: existing.priceUsdt,
         durationDays: existing.durationDays,
@@ -685,6 +687,14 @@ async function verifyChat(
       paused: false,
     },
   };
+}
+
+function keptChannelLabel(previous: string, next: string): string {
+  const incoming = next.trim();
+  const stored = previous.trim();
+  if (incoming && incoming !== "Private channel") return incoming;
+  if (stored && stored !== "Private channel") return stored;
+  return incoming || stored || "Private channel";
 }
 
 function ownershipDraftSnapshot(
